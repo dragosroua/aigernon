@@ -183,5 +183,5 @@ class Config(BaseSettings):
         return None
     
     class Config:
-        env_prefix = "NANOBOT_"
+        env_prefix = "AIGERNON_"
         env_nested_delimiter = "__"
