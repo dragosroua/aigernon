@@ -1,7 +1,7 @@
 ---
 name: add-core
 description: ADD Framework core - Assess, Decide, Do cognitive companion system
-metadata: {"aigernon":{"emoji":"🧠","always":true}}
+metadata: {"aigernon":{"emoji":"🐁","always":true}}
 ---
 
 # ADD Framework Core
