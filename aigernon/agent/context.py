@@ -49,7 +49,12 @@ class ContextBuilder:
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
-        
+
+        # Projects summary
+        projects_summary = self._get_projects_summary()
+        if projects_summary:
+            parts.append(f"# Active Projects\n\n{projects_summary}")
+
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
         always_skills = self.skills.get_always_skills()
@@ -136,14 +141,23 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
         parts = []
-        
+
         for filename in self.BOOTSTRAP_FILES:
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
-        
+
         return "\n\n".join(parts) if parts else ""
+
+    def _get_projects_summary(self) -> str:
+        """Get summary of active projects for context injection."""
+        try:
+            from aigernon.projects.store import ProjectStore
+            store = ProjectStore(self.workspace)
+            return store.get_projects_summary()
+        except Exception:
+            return ""
     
     def build_messages(
         self,
