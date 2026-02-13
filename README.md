@@ -136,6 +136,66 @@ Daily notes include realm flow logging:
 
 Over time, patterns emerge: "User tends to over-assess on financial decisions."
 
+## Coaching Module
+
+AIGernon includes a coaching assistant for between-session client support. It captures ideas, holds questions, handles emergencies, and reviews session history — without coaching.
+
+> "I won't coach you — I hold the space until we meet."
+
+### Setup
+
+```bash
+# Add a coaching client
+aigernon coaching add-client \
+  --id telegram:123456789 \
+  --name "Client Name" \
+  --coach-chat-id 987654321
+
+# Add session notes after a session
+aigernon coaching add-session \
+  --client telegram:123456789 \
+  --date 2024-02-10 \
+  --file notes.md
+
+# Pre-session prep (shows ideas, questions, flags since last session)
+aigernon coaching prep --client telegram:123456789
+```
+
+### Client Operations
+
+Clients interact via natural language through Telegram:
+
+| Intent | Example | Action |
+|--------|---------|--------|
+| Capture idea | "I realized I've been avoiding conflict" | Appends to `ideas.md` with realm tag |
+| Park question | "Ask coach about the HR situation" | Appends to `questions.md` |
+| Emergency | "I'm spiraling, need help" | Grounding + optional coach alert |
+| Review | "What did we cover last month?" | Summarizes session history |
+
+### Data Structure
+
+```
+~/.aigernon/workspace/coaching/
+└── telegram_123456789/
+    ├── client.yaml      # Client config (name, coach contact)
+    ├── ideas.md         # Captured ideas with realm tags
+    ├── questions.md     # Questions for next session
+    ├── flags.md         # Emergency flags
+    ├── history.md       # Coaching arc notes
+    └── sessions/
+        └── 2024-02-10.md
+```
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `aigernon coaching list` | List all clients |
+| `aigernon coaching add-client` | Add a new client |
+| `aigernon coaching add-session` | Add session notes |
+| `aigernon coaching prep` | Pre-session summary |
+| `aigernon coaching history` | View client history |
+
 ## Docker
 
 ```bash

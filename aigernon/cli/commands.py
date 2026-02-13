@@ -797,5 +797,204 @@ def status():
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
 
 
+# ============================================================================
+# Coaching Commands
+# ============================================================================
+
+coaching_app = typer.Typer(help="Coaching assistant for between-session support")
+app.add_typer(coaching_app, name="coaching")
+
+
+@coaching_app.command("list")
+def coaching_list():
+    """List all coaching clients."""
+    from aigernon.config.loader import load_config
+    from aigernon.coaching.store import CoachingStore
+
+    config = load_config()
+    store = CoachingStore(config.workspace_path)
+
+    clients = store.list_clients()
+
+    if not clients:
+        console.print("No coaching clients configured.")
+        console.print("Add one with: [cyan]aigernon coaching add-client[/cyan]")
+        return
+
+    table = Table(title="Coaching Clients")
+    table.add_column("Client ID", style="cyan")
+    table.add_column("Name")
+    table.add_column("Coach Chat ID")
+    table.add_column("Created")
+
+    for client in clients:
+        created = client.get("created_at", "")[:10]
+        table.add_row(
+            client.get("client_id", ""),
+            client.get("name", ""),
+            client.get("coach_chat_id", ""),
+            created,
+        )
+
+    console.print(table)
+
+
+@coaching_app.command("add-client")
+def coaching_add_client(
+    client_id: str = typer.Option(..., "--id", "-i", help="Client ID (e.g., telegram:123456789)"),
+    name: str = typer.Option(..., "--name", "-n", help="Client display name"),
+    coach_chat_id: str = typer.Option(..., "--coach-chat-id", "-c", help="Coach's chat ID for alerts"),
+    coach_channel: str = typer.Option("telegram", "--coach-channel", help="Channel for coach notifications"),
+    timezone: str = typer.Option("UTC", "--timezone", "-t", help="Client's timezone"),
+):
+    """Add a new coaching client."""
+    from aigernon.config.loader import load_config
+    from aigernon.coaching.store import CoachingStore
+
+    config = load_config()
+    store = CoachingStore(config.workspace_path)
+
+    # Check if client already exists
+    existing = store.get_client(client_id)
+    if existing:
+        console.print(f"[yellow]Client {client_id} already exists[/yellow]")
+        if not typer.confirm("Overwrite?"):
+            raise typer.Exit()
+
+    client = store.add_client(
+        client_id=client_id,
+        name=name,
+        coach_chat_id=coach_chat_id,
+        coach_channel=coach_channel,
+        timezone=timezone,
+    )
+
+    console.print(f"[green]✓[/green] Added client '{name}' ({client_id})")
+    console.print(f"  Coach notifications: {coach_channel}:{coach_chat_id}")
+
+
+@coaching_app.command("add-session")
+def coaching_add_session(
+    client_id: str = typer.Option(..., "--client", "-c", help="Client ID"),
+    date: str = typer.Option(None, "--date", "-d", help="Session date (YYYY-MM-DD, default: today)"),
+    file: Path = typer.Option(None, "--file", "-f", help="Read notes from file"),
+):
+    """Add session notes for a client."""
+    from aigernon.config.loader import load_config
+    from aigernon.coaching.store import CoachingStore
+    from aigernon.utils.helpers import today_date
+
+    config = load_config()
+    store = CoachingStore(config.workspace_path)
+
+    # Verify client exists
+    client = store.get_client(client_id)
+    if not client:
+        console.print(f"[red]Client {client_id} not found[/red]")
+        console.print("Add with: [cyan]aigernon coaching add-client --id {client_id}[/cyan]")
+        raise typer.Exit(1)
+
+    # Default to today
+    if not date:
+        date = today_date()
+
+    # Get content from file or interactive input
+    if file:
+        if not file.exists():
+            console.print(f"[red]File not found: {file}[/red]")
+            raise typer.Exit(1)
+        content = file.read_text()
+    else:
+        console.print(f"Enter session notes for {client['name']} ({date}).")
+        console.print("Press Ctrl+D (Unix) or Ctrl+Z (Windows) when done.\n")
+
+        import sys
+        lines = []
+        try:
+            for line in sys.stdin:
+                lines.append(line)
+        except EOFError:
+            pass
+        content = "".join(lines)
+
+    if not content.strip():
+        console.print("[yellow]No content provided, aborting.[/yellow]")
+        raise typer.Exit()
+
+    session_path = store.add_session(client_id, date, content)
+    console.print(f"[green]✓[/green] Added session notes: {session_path}")
+
+
+@coaching_app.command("prep")
+def coaching_prep(
+    client_id: str = typer.Option(..., "--client", "-c", help="Client ID"),
+):
+    """Show pre-session preparation summary."""
+    from aigernon.config.loader import load_config
+    from aigernon.coaching.store import CoachingStore
+
+    config = load_config()
+    store = CoachingStore(config.workspace_path)
+
+    # Verify client exists
+    client = store.get_client(client_id)
+    if not client:
+        console.print(f"[red]Client {client_id} not found[/red]")
+        raise typer.Exit(1)
+
+    summary = store.format_prep_summary(client_id)
+    console.print(summary)
+
+
+@coaching_app.command("history")
+def coaching_history(
+    client_id: str = typer.Option(..., "--client", "-c", help="Client ID"),
+    days: int = typer.Option(30, "--days", "-d", help="Days to look back"),
+):
+    """View client coaching history."""
+    from datetime import datetime, timedelta
+    from aigernon.config.loader import load_config
+    from aigernon.coaching.store import CoachingStore
+
+    config = load_config()
+    store = CoachingStore(config.workspace_path)
+
+    # Verify client exists
+    client = store.get_client(client_id)
+    if not client:
+        console.print(f"[red]Client {client_id} not found[/red]")
+        raise typer.Exit(1)
+
+    since_date = datetime.now() - timedelta(days=days)
+
+    console.print(f"# History: {client['name']}")
+    console.print(f"Last {days} days\n")
+
+    # Sessions
+    console.print("## Sessions")
+    sessions_summary = store.get_sessions_summary(client_id, since_date)
+    console.print(sessions_summary)
+    console.print()
+
+    # Ideas
+    console.print("## Ideas")
+    ideas = store.get_ideas(client_id, since_date)
+    console.print(ideas if ideas.strip() else "No ideas captured.")
+    console.print()
+
+    # Questions
+    console.print("## Questions")
+    questions = store.get_questions(client_id, since_date)
+    console.print(questions if questions.strip() else "No questions recorded.")
+    console.print()
+
+    # Flags
+    flag_count = store.count_flags(client_id, since_date)
+    if flag_count > 0:
+        console.print(f"## Flags ({flag_count})")
+        flags = store.get_flags(client_id, since_date)
+        console.print(flags)
+
+
 if __name__ == "__main__":
     app()

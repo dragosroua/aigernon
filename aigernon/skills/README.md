@@ -21,6 +21,16 @@ The core cognitive layer of AIGernon. These skills implement the Assess-Decide-D
 | `add-do` | Deep support for the Do realm |
 | `add-imbalance` | Detect and support stuck patterns |
 
+## Coaching Skill
+
+Between-session support for coaching clients.
+
+| Skill | Description |
+|-------|-------------|
+| `coaching` | Captures ideas, holds questions, handles emergencies, reviews sessions |
+
+The coaching skill integrates with the ADD framework to tag captured ideas with their detected realm (Assess/Decide/Do).
+
 ## Utility Skills
 
 General-purpose capabilities inherited from nanobot.
