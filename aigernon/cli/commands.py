@@ -798,6 +798,678 @@ def status():
 
 
 # ============================================================================
+# Projects Commands
+# ============================================================================
+
+ideas_app = typer.Typer(help="Brainstorming ideas (always in Assess)")
+app.add_typer(ideas_app, name="ideas")
+
+projects_app = typer.Typer(help="iOS project management with ADD workflow")
+app.add_typer(projects_app, name="projects")
+
+tasks_app = typer.Typer(help="Task management within projects")
+app.add_typer(tasks_app, name="tasks")
+
+versions_app = typer.Typer(help="Version management for projects")
+app.add_typer(versions_app, name="versions")
+
+
+# --- Ideas Commands ---
+
+@ideas_app.command("list")
+def ideas_list():
+    """List all ideas."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    ideas = store.list_ideas()
+
+    if not ideas:
+        console.print("No ideas yet.")
+        console.print("Add one with: [cyan]aigernon ideas add \"My Idea\"[/cyan]")
+        return
+
+    table = Table(title="Ideas")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title")
+    table.add_column("Items", justify="right")
+
+    for idea in ideas:
+        table.add_row(
+            idea["id"],
+            idea["title"],
+            str(len(idea["items"])),
+        )
+
+    console.print(table)
+
+
+@ideas_app.command("add")
+def ideas_add(title: str = typer.Argument(..., help="Idea title")):
+    """Add a new idea."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    idea_id = store.add_idea(title)
+    console.print(f"[green]✓[/green] Created idea: {idea_id}")
+
+
+@ideas_app.command("show")
+def ideas_show(idea_id: str = typer.Argument(..., help="Idea ID")):
+    """Show an idea with its items."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    idea = store.get_idea(idea_id)
+    if not idea:
+        console.print(f"[red]Idea {idea_id} not found[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"# {idea['title']}\n")
+    if idea["items"]:
+        for i, item in enumerate(idea["items"]):
+            console.print(f"  {i}. {item}")
+    else:
+        console.print("  [dim]No items yet[/dim]")
+
+
+@ideas_app.command("add-item")
+def ideas_add_item(
+    idea_id: str = typer.Argument(..., help="Idea ID"),
+    item: str = typer.Argument(..., help="Item to add"),
+):
+    """Add an item to an idea."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    if not store.add_idea_item(idea_id, item):
+        console.print(f"[red]Idea {idea_id} not found[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Added item to {idea_id}")
+
+
+@ideas_app.command("convert")
+def ideas_convert(
+    idea_id: str = typer.Argument(..., help="Idea ID to convert"),
+    repo: str = typer.Option(..., "--repo", "-r", help="Git repository URL"),
+):
+    """Convert an idea to a project."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    project_id = store.convert_idea_to_project(idea_id, repo)
+    if not project_id:
+        console.print(f"[red]Idea {idea_id} not found[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Converted to project: {project_id}")
+    console.print(f"  Realm: [cyan]Assess[/cyan]")
+
+
+@ideas_app.command("delete")
+def ideas_delete(idea_id: str = typer.Argument(..., help="Idea ID to delete")):
+    """Delete an idea."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    if not store.delete_idea(idea_id):
+        console.print(f"[red]Idea {idea_id} not found[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Deleted idea: {idea_id}")
+
+
+# --- Projects Commands ---
+
+@projects_app.command("list")
+def projects_list(
+    realm: str = typer.Option(None, "--realm", "-r", help="Filter by realm (assess/decide/do)"),
+):
+    """List all projects."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    projects = store.list_projects(realm=realm)
+
+    if not projects:
+        console.print("No projects yet.")
+        console.print("Add one with: [cyan]aigernon projects add \"My App\" --repo <url>[/cyan]")
+        return
+
+    table = Table(title="Projects")
+    table.add_column("ID", style="cyan")
+    table.add_column("Name")
+    table.add_column("Realm")
+    table.add_column("Version")
+    table.add_column("Tasks", justify="right")
+
+    realm_colors = {"assess": "red", "decide": "yellow", "do": "green"}
+
+    for project in projects:
+        project_id = project.get("id", "")
+        realm_val = project.get("realm", "assess")
+        realm_display = f"[{realm_colors.get(realm_val, 'white')}]{realm_val.capitalize()}[/]"
+        version = project.get("current_version") or "-"
+
+        tasks = store.list_tasks(project_id)
+        task_count = str(len(tasks))
+
+        table.add_row(
+            project_id,
+            project.get("name", ""),
+            realm_display,
+            version,
+            task_count,
+        )
+
+    console.print(table)
+
+
+@projects_app.command("add")
+def projects_add(
+    name: str = typer.Argument(..., help="Project name"),
+    repo: str = typer.Option(..., "--repo", "-r", help="Git repository URL"),
+):
+    """Add a new project."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    project_id = store.add_project(name, repo)
+    console.print(f"[green]✓[/green] Created project: {project_id}")
+    console.print(f"  Realm: [red]Assess[/red]")
+    console.print(f"  Repo: {repo}")
+
+
+@projects_app.command("show")
+def projects_show(project_id: str = typer.Argument(..., help="Project ID")):
+    """Show project details."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    project = store.get_project(project_id)
+    if not project:
+        console.print(f"[red]Project {project_id} not found[/red]")
+        raise typer.Exit(1)
+
+    realm_colors = {"assess": "red", "decide": "yellow", "do": "green"}
+    realm = project.get("realm", "assess")
+
+    console.print(f"# {project.get('name')}")
+    console.print(f"  ID: {project_id}")
+    console.print(f"  Realm: [{realm_colors.get(realm, 'white')}]{realm.capitalize()}[/]")
+    console.print(f"  Repo: {project.get('repo')}")
+
+    if project.get("current_version"):
+        console.print(f"  Version: {project.get('current_version')}")
+
+    # Show realm time analysis
+    console.print(f"\n  Time: {store.format_realm_time(project_id)}")
+
+    # Show tasks summary
+    tasks = store.list_tasks(project_id)
+    if tasks:
+        console.print(f"\n## Tasks ({len(tasks)})")
+        for task in tasks:
+            status = task.get("status", "draft")
+            status_icons = {
+                "draft": "○",
+                "ready": "◉",
+                "unscheduled": "◎",
+                "scheduled": "●",
+                "in_progress": "▶",
+                "blocked": "■",
+                "done": "✓",
+            }
+            icon = status_icons.get(status, "?")
+            version = f" (v{task.get('version')})" if task.get("version") else ""
+            console.print(f"  {icon} {task['id']}: {task['title']}{version}")
+
+
+@projects_app.command("move")
+def projects_move(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    target_realm: str = typer.Argument(..., help="Target realm (assess/decide/do)"),
+    reason: str = typer.Option(None, "--reason", "-r", help="Reason for move (required for backtracking)"),
+):
+    """Move project to a different realm."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    success, issues = store.move_project_to_realm(project_id, target_realm, reason)
+
+    if not success:
+        console.print(f"[red]Cannot move project:[/red]")
+        for issue in issues:
+            console.print(f"  - {issue}")
+        raise typer.Exit(1)
+
+    realm_colors = {"assess": "red", "decide": "yellow", "do": "green"}
+    console.print(f"[green]✓[/green] Moved project to [{realm_colors.get(target_realm, 'white')}]{target_realm.capitalize()}[/]")
+
+
+@projects_app.command("stuck")
+def projects_stuck(
+    days: int = typer.Option(7, "--days", "-d", help="Days threshold"),
+):
+    """Show projects stuck in a realm too long."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    stuck = store.get_stuck_projects(days)
+
+    if not stuck:
+        console.print(f"No projects stuck for more than {days} days.")
+        return
+
+    table = Table(title=f"Projects Stuck > {days} Days")
+    table.add_column("Project", style="cyan")
+    table.add_column("Realm")
+    table.add_column("Time in Realm")
+
+    realm_colors = {"assess": "red", "decide": "yellow", "do": "green"}
+
+    for p in stuck:
+        realm = p.get("realm", "assess")
+        realm_display = f"[{realm_colors.get(realm, 'white')}]{realm.capitalize()}[/]"
+        table.add_row(p["name"], realm_display, p["time_in_realm"])
+
+    console.print(table)
+
+
+# --- Tasks Commands ---
+
+@tasks_app.command("list")
+def tasks_list(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    status: str = typer.Option(None, "--status", "-s", help="Filter by status"),
+    version: str = typer.Option(None, "--version", "-v", help="Filter by version"),
+):
+    """List tasks for a project."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    project = store.get_project(project_id)
+    if not project:
+        console.print(f"[red]Project {project_id} not found[/red]")
+        raise typer.Exit(1)
+
+    tasks = store.list_tasks(project_id, status=status, version=version)
+
+    if not tasks:
+        console.print(f"No tasks in project {project_id}.")
+        return
+
+    table = Table(title=f"Tasks: {project.get('name')}")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title")
+    table.add_column("Type")
+    table.add_column("Status")
+    table.add_column("Version")
+
+    status_colors = {
+        "draft": "dim",
+        "ready": "white",
+        "unscheduled": "yellow",
+        "scheduled": "cyan",
+        "in_progress": "blue",
+        "blocked": "red",
+        "done": "green",
+    }
+
+    for task in tasks:
+        status_val = task.get("status", "draft")
+        status_display = f"[{status_colors.get(status_val, 'white')}]{status_val}[/]"
+        version_val = task.get("version") or "-"
+
+        table.add_row(
+            task["id"],
+            task["title"],
+            task.get("type", "feature"),
+            status_display,
+            version_val,
+        )
+
+    console.print(table)
+
+
+@tasks_app.command("add")
+def tasks_add(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    title: str = typer.Argument(..., help="Task title"),
+    description: str = typer.Option("", "--desc", "-d", help="Task description"),
+    task_type: str = typer.Option("feature", "--type", "-t", help="Task type (feature/bug)"),
+):
+    """Add a task to a project (only in Assess)."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    task_id = store.add_task(project_id, title, description, task_type)
+    if not task_id:
+        project = store.get_project(project_id)
+        if not project:
+            console.print(f"[red]Project {project_id} not found[/red]")
+        else:
+            console.print(f"[red]Cannot add tasks in {project.get('realm')} realm (only Assess)[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Added task {task_id}: {title}")
+
+
+@tasks_app.command("show")
+def tasks_show(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    task_id: str = typer.Argument(..., help="Task ID"),
+):
+    """Show task details."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    task = store.get_task(project_id, task_id)
+    if not task:
+        console.print(f"[red]Task {task_id} not found in project {project_id}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"# {task['title']}")
+    console.print(f"  ID: {task['id']}")
+    console.print(f"  Type: {task.get('type', 'feature')}")
+    console.print(f"  Status: {task.get('status', 'draft')}")
+
+    if task.get("version"):
+        console.print(f"  Version: {task['version']}")
+    if task.get("branch"):
+        console.print(f"  Branch: {task['branch']}")
+    if task.get("description"):
+        console.print(f"\n## Description\n{task['description']}")
+    if task.get("execution_log"):
+        console.print(f"\n## Execution Log\n{task['execution_log']}")
+
+
+@tasks_app.command("ready")
+def tasks_ready(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    task_id: str = typer.Argument(..., help="Task ID"),
+):
+    """Mark a task as ready (done defining)."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    if not store.mark_task_ready(project_id, task_id):
+        console.print(f"[red]Cannot mark task ready (check project realm and task status)[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Task {task_id} marked ready")
+
+
+@tasks_app.command("schedule")
+def tasks_schedule(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    task_id: str = typer.Argument(..., help="Task ID"),
+    version: str = typer.Option(..., "--version", "-v", help="Version to assign"),
+):
+    """Schedule a task (assign to version, only in Decide)."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    if not store.schedule_task(project_id, task_id, version):
+        console.print(f"[red]Cannot schedule task (check project realm and task status)[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Scheduled task {task_id} for version {version}")
+
+
+@tasks_app.command("start")
+def tasks_start(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    task_id: str = typer.Argument(..., help="Task ID"),
+    branch: str = typer.Option(None, "--branch", "-b", help="Branch name (auto-generated if not provided)"),
+):
+    """Start working on a task (only in Do)."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    if not store.start_task(project_id, task_id, branch):
+        console.print(f"[red]Cannot start task (check project realm and task status)[/red]")
+        raise typer.Exit(1)
+
+    task = store.get_task(project_id, task_id)
+    console.print(f"[green]✓[/green] Started task {task_id}")
+    console.print(f"  Branch: {task.get('branch')}")
+
+
+@tasks_app.command("done")
+def tasks_done(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    task_id: str = typer.Argument(..., help="Task ID"),
+    log_file: Path = typer.Option(None, "--log", "-l", help="Read execution log from file"),
+):
+    """Mark a task as done."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    # Get execution log
+    if log_file:
+        if not log_file.exists():
+            console.print(f"[red]Log file not found: {log_file}[/red]")
+            raise typer.Exit(1)
+        execution_log = log_file.read_text()
+    else:
+        console.print("Enter execution log (Ctrl+D when done):")
+        import sys
+        lines = []
+        try:
+            for line in sys.stdin:
+                lines.append(line)
+        except EOFError:
+            pass
+        execution_log = "".join(lines)
+
+    if not store.complete_task(project_id, task_id, execution_log):
+        console.print(f"[red]Cannot complete task (check project realm and task status)[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Task {task_id} completed")
+
+
+# --- Versions Commands ---
+
+@versions_app.command("list")
+def versions_list(project_id: str = typer.Argument(..., help="Project ID")):
+    """List versions for a project."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    project = store.get_project(project_id)
+    if not project:
+        console.print(f"[red]Project {project_id} not found[/red]")
+        raise typer.Exit(1)
+
+    versions = store.list_versions(project_id)
+
+    if not versions:
+        console.print(f"No versions in project {project_id}.")
+        return
+
+    table = Table(title=f"Versions: {project.get('name')}")
+    table.add_column("Version", style="cyan")
+    table.add_column("Status")
+    table.add_column("Branch")
+    table.add_column("Tasks", justify="right")
+
+    status_colors = {
+        "planned": "dim",
+        "active": "blue",
+        "ready": "green",
+        "released": "cyan",
+    }
+
+    for v in versions:
+        status = v.get("status", "planned")
+        status_display = f"[{status_colors.get(status, 'white')}]{status}[/]"
+
+        table.add_row(
+            v["version"],
+            status_display,
+            v.get("branch", ""),
+            str(len(v.get("tasks", []))),
+        )
+
+    console.print(table)
+
+
+@versions_app.command("add")
+def versions_add(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    version: str = typer.Argument(..., help="Version string (e.g., 1.2.0)"),
+):
+    """Add a new version to a project."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    if not store.add_version(project_id, version):
+        console.print(f"[red]Cannot add version (project not found or version exists)[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Added version {version}")
+    console.print(f"  Branch: version/{version}")
+
+
+@versions_app.command("show")
+def versions_show(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    version: str = typer.Argument(..., help="Version string"),
+):
+    """Show version details."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    v = store.get_version(project_id, version)
+    if not v:
+        console.print(f"[red]Version {version} not found in project {project_id}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"# Version {v['version']}")
+    console.print(f"  Status: {v.get('status', 'planned')}")
+    console.print(f"  Branch: {v.get('branch')}")
+
+    # Show tasks
+    task_ids = v.get("tasks", [])
+    if task_ids:
+        console.print(f"\n## Tasks ({len(task_ids)})")
+        for task_id in task_ids:
+            task = store.get_task(project_id, task_id)
+            if task:
+                status_icon = "✓" if task.get("status") == "done" else "○"
+                console.print(f"  {status_icon} {task_id}: {task['title']}")
+
+
+@versions_app.command("release")
+def versions_release(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    version: str = typer.Argument(..., help="Version string"),
+):
+    """Mark a version as ready for release (all tasks must be done)."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    success, issues = store.release_version(project_id, version)
+
+    if not success:
+        console.print(f"[red]Cannot release version:[/red]")
+        for issue in issues:
+            console.print(f"  - {issue}")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Version {version} ready for release")
+    console.print(f"  Merge branch version/{version} to main")
+
+
+@versions_app.command("mark-released")
+def versions_mark_released(
+    project_id: str = typer.Argument(..., help="Project ID"),
+    version: str = typer.Argument(..., help="Version string"),
+):
+    """Mark a version as released (after merging to main)."""
+    from aigernon.config.loader import load_config
+    from aigernon.projects.store import ProjectStore
+
+    config = load_config()
+    store = ProjectStore(config.workspace_path)
+
+    if not store.mark_version_released(project_id, version):
+        console.print(f"[red]Cannot mark released (version must be in 'ready' status)[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Version {version} marked as released")
+
+
+# ============================================================================
 # Coaching Commands
 # ============================================================================
 

@@ -31,6 +31,19 @@ Between-session support for coaching clients.
 
 The coaching skill integrates with the ADD framework to tag captured ideas with their detected realm (Assess/Decide/Do).
 
+## Projects Skill
+
+iOS app development workflow with ADD integration.
+
+| Skill | Description |
+|-------|-------------|
+| `projects` | Manages ideas, projects, tasks, and versions through Assess→Decide→Do |
+
+The projects skill enforces the ADD workflow:
+- **Assess**: Define scope, add/edit tasks
+- **Decide**: Lock scope, schedule tasks to versions
+- **Do**: Execute tasks, capture results, ship
+
 ## Utility Skills
 
 General-purpose capabilities inherited from nanobot.
