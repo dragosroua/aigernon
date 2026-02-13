@@ -33,6 +33,7 @@ dependencies = [
     "python-telegram-bot[socks]>=21.0",
     "lark-oapi>=1.0.0",
     "socksio>=1.0.0",
+    "pyyaml>=6.0.0",
 ]
 
 [project.optional-dependencies]
