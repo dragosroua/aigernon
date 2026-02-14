@@ -311,22 +311,29 @@ def gateway(
     from aigernon.cron.service import CronService
     from aigernon.cron.types import CronJob
     from aigernon.heartbeat.service import HeartbeatService
-    
+    from aigernon.daemon.status import DaemonStatus
+    from aigernon.daemon.signals import create_shutdown_handler
+
     if verbose:
         import logging
         logging.basicConfig(level=logging.DEBUG)
-    
+
     console.print(f"{__logo__} Starting aigernon gateway on port {port}...")
-    
+
     config = load_config()
+    data_dir = get_data_dir()
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
-    
+
+    # Initialize daemon status tracking
+    daemon_status = DaemonStatus(data_dir)
+    daemon_status.write_pid()
+
     # Create cron service first (callback set after agent creation)
-    cron_store_path = get_data_dir() / "cron" / "jobs.json"
+    cron_store_path = data_dir / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
-    
+
     # Create agent with cron service
     agent = AgentLoop(
         bus=bus,
@@ -340,7 +347,7 @@ def gateway(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
     )
-    
+
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
@@ -359,49 +366,110 @@ def gateway(
             ))
         return response
     cron.on_job = on_cron_job
-    
+
     # Create heartbeat service
     async def on_heartbeat(prompt: str) -> str:
         """Execute heartbeat through the agent."""
         return await agent.process_direct(prompt, session_key="heartbeat")
-    
+
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
         on_heartbeat=on_heartbeat,
         interval_s=30 * 60,  # 30 minutes
         enabled=True
     )
-    
+
     # Create channel manager
     channels = ChannelManager(config, bus, session_manager=session_manager)
-    
+
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
-    
+
     cron_status = cron.status()
     if cron_status["jobs"] > 0:
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
-    
+
     console.print(f"[green]✓[/green] Heartbeat: every 30m")
-    
+
+    # Write initial daemon status
+    daemon_status.write_status(
+        channels_active=channels.enabled_channels,
+        sessions_active=0,
+    )
+
+    # Setup graceful shutdown handler
+    shutdown_handler = create_shutdown_handler(
+        daemon_status=daemon_status,
+        agent=agent,
+        channels=channels,
+        heartbeat=heartbeat,
+        cron=cron,
+        timeout_s=30,
+    )
+    shutdown_handler.setup_handlers()
+
     async def run():
+        # Start daemon heartbeat for status tracking
+        await daemon_status.start_heartbeat_loop(
+            get_channels=lambda: channels.enabled_channels,
+            get_sessions=lambda: len(session_manager.list_sessions()),
+            interval_s=60,
+        )
+
         try:
             await cron.start()
             await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
-            )
+
+            # Run services with shutdown handling
+            async def run_with_shutdown():
+                services_task = asyncio.create_task(
+                    asyncio.gather(
+                        agent.run(),
+                        channels.start_all(),
+                    )
+                )
+                shutdown_task = asyncio.create_task(shutdown_handler.wait_for_shutdown())
+
+                done, pending = await asyncio.wait(
+                    [services_task, shutdown_task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # Cancel pending tasks
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+
+                # If shutdown was triggered, execute shutdown sequence
+                if shutdown_handler.should_shutdown:
+                    console.print("\nShutting down...")
+                    await shutdown_handler.execute_shutdown()
+
+            await run_with_shutdown()
+
         except KeyboardInterrupt:
             console.print("\nShutting down...")
+            daemon_status.stop_heartbeat_loop()
             heartbeat.stop()
             cron.stop()
             agent.stop()
             await channels.stop_all()
-    
-    asyncio.run(run())
+            daemon_status.cleanup()
+
+    exit_code = 0
+    try:
+        asyncio.run(run())
+        exit_code = shutdown_handler.exit_code
+    finally:
+        # Ensure cleanup on any exit
+        daemon_status.cleanup()
+
+    raise typer.Exit(exit_code)
 
 
 
@@ -1666,6 +1734,217 @@ def coaching_history(
         console.print(f"## Flags ({flag_count})")
         flags = store.get_flags(client_id, since_date)
         console.print(flags)
+
+
+# ============================================================================
+# Daemon Commands
+# ============================================================================
+
+daemon_app = typer.Typer(help="Manage the aigernon daemon service")
+app.add_typer(daemon_app, name="daemon")
+
+
+@daemon_app.command("install")
+def daemon_install():
+    """Generate and install the system service."""
+    from aigernon.daemon.manager import DaemonManager
+
+    manager = DaemonManager()
+
+    if not manager.is_supported():
+        console.print(
+            "[yellow]Daemon management is not supported on this platform.[/yellow]\n"
+            "Run `aigernon gateway` manually or use Docker."
+        )
+        raise typer.Exit(1)
+
+    success, message = manager.install()
+
+    if success:
+        console.print(f"[green]✓[/green] {message}")
+        console.print("\nStart the daemon with: [cyan]aigernon daemon start[/cyan]")
+    else:
+        console.print(f"[red]✗[/red] {message}")
+        raise typer.Exit(1)
+
+
+@daemon_app.command("uninstall")
+def daemon_uninstall():
+    """Remove the system service."""
+    from aigernon.daemon.manager import DaemonManager
+
+    manager = DaemonManager()
+
+    if not manager.is_supported():
+        console.print("[yellow]Daemon management is not supported on this platform.[/yellow]")
+        raise typer.Exit(1)
+
+    # Stop first if running
+    status = manager.get_status()
+    if status["running"]:
+        console.print("Stopping daemon first...")
+        manager.stop()
+
+    success, message = manager.uninstall()
+
+    if success:
+        console.print(f"[green]✓[/green] {message}")
+    else:
+        console.print(f"[red]✗[/red] {message}")
+        raise typer.Exit(1)
+
+
+@daemon_app.command("start")
+def daemon_start():
+    """Start the daemon."""
+    from aigernon.daemon.manager import DaemonManager
+
+    manager = DaemonManager()
+
+    if not manager.is_supported():
+        console.print("[yellow]Daemon management is not supported on this platform.[/yellow]")
+        raise typer.Exit(1)
+
+    success, message = manager.start()
+
+    if success:
+        console.print(f"[green]✓[/green] {message}")
+    else:
+        console.print(f"[red]✗[/red] {message}")
+        raise typer.Exit(1)
+
+
+@daemon_app.command("stop")
+def daemon_stop():
+    """Stop the daemon gracefully."""
+    from aigernon.daemon.manager import DaemonManager
+
+    manager = DaemonManager()
+
+    if not manager.is_supported():
+        console.print("[yellow]Daemon management is not supported on this platform.[/yellow]")
+        raise typer.Exit(1)
+
+    success, message = manager.stop()
+
+    if success:
+        console.print(f"[green]✓[/green] {message}")
+    else:
+        console.print(f"[red]✗[/red] {message}")
+        raise typer.Exit(1)
+
+
+@daemon_app.command("restart")
+def daemon_restart():
+    """Restart the daemon."""
+    from aigernon.daemon.manager import DaemonManager
+
+    manager = DaemonManager()
+
+    if not manager.is_supported():
+        console.print("[yellow]Daemon management is not supported on this platform.[/yellow]")
+        raise typer.Exit(1)
+
+    success, message = manager.restart()
+
+    if success:
+        console.print(f"[green]✓[/green] {message}")
+    else:
+        console.print(f"[red]✗[/red] {message}")
+        raise typer.Exit(1)
+
+
+@daemon_app.command("status")
+def daemon_status():
+    """Show daemon status."""
+    from aigernon.daemon.manager import DaemonManager
+
+    manager = DaemonManager()
+    status = manager.get_status()
+
+    console.print(f"{__logo__} Daemon Status\n")
+
+    # Platform
+    platform_name = {"macos": "macOS (launchd)", "linux": "Linux (systemd)", "unsupported": "Unsupported"}.get(
+        status["platform"], status["platform"]
+    )
+    console.print(f"Platform: {platform_name}")
+
+    # Installation
+    if status["installed"]:
+        console.print(f"Installed: [green]✓[/green] {manager.service_file}")
+    else:
+        console.print("Installed: [dim]no[/dim]")
+
+    # Running status
+    if status["running"]:
+        console.print(f"Running: [green]✓[/green] (PID {status['pid']})")
+        console.print(f"Uptime: {status['uptime'] or 'unknown'}")
+
+        if status["last_heartbeat"] is not None:
+            console.print(f"Last heartbeat: {status['last_heartbeat']}s ago")
+
+        if status["channels_active"]:
+            console.print(f"Channels: {', '.join(status['channels_active'])}")
+
+        console.print(f"Active sessions: {status['sessions_active']}")
+    else:
+        console.print("Running: [dim]no[/dim]")
+
+    # Log file
+    console.print(f"Logs: {manager.get_log_path()}")
+
+
+@daemon_app.command("logs")
+def daemon_logs(
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
+):
+    """Tail the daemon log file."""
+    import subprocess
+    import time
+
+    from aigernon.daemon.manager import DaemonManager
+
+    manager = DaemonManager()
+    log_path = manager.get_log_path()
+
+    if not log_path.exists():
+        console.print(f"[yellow]Log file does not exist: {log_path}[/yellow]")
+        console.print("Start the daemon first with: [cyan]aigernon daemon start[/cyan]")
+        raise typer.Exit(1)
+
+    if follow:
+        # Use tail -f for following
+        try:
+            subprocess.run(["tail", "-f", "-n", str(lines), str(log_path)])
+        except KeyboardInterrupt:
+            pass
+    else:
+        # Read last N lines
+        try:
+            with open(log_path) as f:
+                all_lines = f.readlines()
+                for line in all_lines[-lines:]:
+                    console.print(line.rstrip())
+        except OSError as e:
+            console.print(f"[red]Error reading log file: {e}[/red]")
+            raise typer.Exit(1)
+
+
+# ============================================================================
+# Doctor Command
+# ============================================================================
+
+
+@app.command()
+def doctor():
+    """Run health checks on aigernon installation."""
+    from aigernon.daemon.health import run_health_check
+
+    output, exit_code = run_health_check()
+    console.print(output)
+    raise typer.Exit(exit_code)
 
 
 if __name__ == "__main__":
