@@ -98,6 +98,19 @@ Ideas → Projects → Tasks → Versions → Release
 - **Telegram**: Always-on bot
 - **Discord, WhatsApp, Feishu, DingTalk**: Additional channels
 
+### Daemon Mode
+
+Run AIGernon as a system service that survives reboots and auto-restarts on crash:
+
+```bash
+aigernon daemon install   # Install system service
+aigernon daemon start     # Start the daemon
+aigernon daemon status    # Check status
+aigernon doctor           # Health check
+```
+
+Supports **macOS** (launchd) and **Linux** (systemd). [Daemon documentation →](docs/DAEMON.md)
+
 ---
 
 ## Quick Start
@@ -160,6 +173,7 @@ aigernon channel telegram
 | [ADD Framework](docs/ADD_FRAMEWORK.md) | Core cognitive framework |
 | [Coaching Module](docs/COACHING.md) | Between-session client support |
 | [Projects Module](docs/PROJECTS.md) | iOS development workflow |
+| [Daemon & Service](docs/DAEMON.md) | Running as a system service |
 | [Skills System](aigernon/skills/README.md) | Extensible capabilities |
 
 ---
@@ -194,6 +208,20 @@ aigernon tasks list|add|ready|schedule    # Task workflow
 aigernon versions list|add|release        # Version control
 ```
 
+### Daemon
+
+```bash
+aigernon daemon install       # Install system service
+aigernon daemon uninstall     # Remove system service
+aigernon daemon start         # Start the daemon
+aigernon daemon stop          # Stop gracefully
+aigernon daemon restart       # Restart the daemon
+aigernon daemon status        # Show status (PID, uptime)
+aigernon daemon logs          # Tail daemon logs
+aigernon daemon logs -f       # Follow logs
+aigernon doctor               # Health check
+```
+
 ---
 
 ## Architecture
@@ -201,7 +229,11 @@ aigernon versions list|add|release        # Version control
 ```
 ~/.aigernon/
 ├── config.json              # Configuration
+├── daemon.pid               # Daemon process ID
+├── daemon.status.json       # Daemon status (heartbeat, channels)
 ├── sessions/                # Conversation history
+├── logs/
+│   └── daemon.log           # Daemon output
 └── workspace/
     ├── memory/              # Cognitive memory
     │   ├── MEMORY.md        # Long-term
