@@ -19,3 +19,4 @@ poetry.lock
 .pytest_cache/
 tests/prompt.md
 .claude/
+docs/SECURITY_BACKLOG.md

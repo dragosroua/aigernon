@@ -114,11 +114,30 @@ class ExecToolConfig(BaseModel):
     timeout: int = 60
 
 
+class RateLimitConfig(BaseModel):
+    """Rate limiting configuration."""
+    enabled: bool = True
+    max_requests: int = 30  # Maximum requests per window
+    window_seconds: int = 60  # Time window
+    burst_limit: int = 5  # Maximum burst requests
+    burst_window_seconds: int = 5  # Burst window
+
+
+class SecurityConfig(BaseModel):
+    """Security configuration."""
+    restrict_to_workspace: bool = True  # Restrict tool access to workspace (secure default)
+    use_exec_allowlist: bool = True  # Use allowlist for exec commands
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    audit_enabled: bool = True  # Enable audit logging
+    integrity_check_on_startup: bool = True  # Check file integrity on startup
+    session_ttl_hours: int = 24  # Session expiry time (0 = no expiry)
+
+
 class ToolsConfig(BaseModel):
     """Tools configuration."""
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
-    restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
+    restrict_to_workspace: bool = True  # SECURITY: Restrict all tool access to workspace directory (secure default)
 
 
 class Config(BaseSettings):
@@ -128,6 +147,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     
     @property
     def workspace_path(self) -> Path:

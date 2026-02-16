@@ -175,6 +175,7 @@ aigernon channel telegram
 | [Projects Module](docs/PROJECTS.md) | iOS development workflow |
 | [Daemon & Service](docs/DAEMON.md) | Running as a system service |
 | [Skills System](aigernon/skills/README.md) | Extensible capabilities |
+| [Security](docs/SECURITY.md) | Security features and hardening |
 
 ---
 
@@ -265,6 +266,29 @@ AIGernon loads cognitive skills dynamically:
 | `projects` | No | iOS development workflow |
 
 Custom skills go in `~/.aigernon/workspace/skills/{name}/SKILL.md`.
+
+---
+
+## Security
+
+AIGernon includes a security module to protect against abuse and unauthorized modifications:
+
+| Feature | Description |
+|---------|-------------|
+| **Rate Limiting** | Per-user sliding window with burst protection |
+| **Audit Logging** | Tool invocations, access denials, security events |
+| **Integrity Monitoring** | SHA-256 hash verification for critical files |
+| **Input Sanitization** | Protection against injection attacks |
+
+```
+~/.aigernon/
+├── audit/                    # Daily audit logs (JSONL)
+│   └── audit-YYYY-MM-DD.jsonl
+└── security/
+    └── integrity_hashes.json  # File integrity baselines
+```
+
+[Security documentation →](docs/SECURITY.md)
 
 ---
 

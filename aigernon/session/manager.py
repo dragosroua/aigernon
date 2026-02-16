@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from loguru import logger
@@ -15,15 +15,22 @@ from aigernon.utils.helpers import ensure_dir, safe_filename
 class Session:
     """
     A conversation session.
-    
+
     Stores messages in JSONL format for easy reading and persistence.
     """
-    
+
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def is_expired(self, ttl_hours: int) -> bool:
+        """Check if session has expired based on TTL."""
+        if ttl_hours <= 0:
+            return False  # No expiry
+        expiry_time = self.updated_at + timedelta(hours=ttl_hours)
+        return datetime.now() > expiry_time
     
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
@@ -61,14 +68,24 @@ class Session:
 class SessionManager:
     """
     Manages conversation sessions.
-    
+
     Sessions are stored as JSONL files in the sessions directory.
+    Supports TTL-based expiry and automatic cleanup.
     """
-    
-    def __init__(self, workspace: Path):
+
+    def __init__(self, workspace: Path, ttl_hours: int = 24):
+        """
+        Initialize session manager.
+
+        Args:
+            workspace: Workspace directory.
+            ttl_hours: Session TTL in hours (0 = no expiry).
+        """
         self.workspace = workspace
         self.sessions_dir = ensure_dir(Path.home() / ".aigernon" / "sessions")
+        self.ttl_hours = ttl_hours
         self._cache: dict[str, Session] = {}
+        self._last_cleanup = datetime.now()
     
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""
@@ -78,24 +95,87 @@ class SessionManager:
     def get_or_create(self, key: str) -> Session:
         """
         Get an existing session or create a new one.
-        
+
+        Expired sessions are automatically cleared and a new session is created.
+
         Args:
             key: Session key (usually channel:chat_id).
-        
+
         Returns:
             The session.
         """
+        # Periodic cleanup (every hour)
+        if (datetime.now() - self._last_cleanup).total_seconds() > 3600:
+            self._cleanup_expired()
+
         # Check cache
         if key in self._cache:
-            return self._cache[key]
-        
+            session = self._cache[key]
+            # Check if expired
+            if session.is_expired(self.ttl_hours):
+                logger.info(f"Session expired: {key}")
+                self.delete(key)
+                session = Session(key=key)
+                self._cache[key] = session
+            return session
+
         # Try to load from disk
         session = self._load(key)
         if session is None:
             session = Session(key=key)
-        
+        elif session.is_expired(self.ttl_hours):
+            # Loaded but expired
+            logger.info(f"Session expired (on load): {key}")
+            self.delete(key)
+            session = Session(key=key)
+
         self._cache[key] = session
         return session
+
+    def _cleanup_expired(self) -> int:
+        """
+        Clean up expired sessions from disk.
+
+        Returns:
+            Number of sessions cleaned up.
+        """
+        if self.ttl_hours <= 0:
+            return 0  # No expiry configured
+
+        cleaned = 0
+        self._last_cleanup = datetime.now()
+
+        # Check cached sessions
+        expired_keys = [
+            key for key, session in self._cache.items()
+            if session.is_expired(self.ttl_hours)
+        ]
+        for key in expired_keys:
+            self.delete(key)
+            cleaned += 1
+
+        # Check on-disk sessions not in cache
+        for path in self.sessions_dir.glob("*.jsonl"):
+            try:
+                with open(path) as f:
+                    first_line = f.readline().strip()
+                    if first_line:
+                        data = json.loads(first_line)
+                        if data.get("_type") == "metadata":
+                            updated_at = data.get("updated_at")
+                            if updated_at:
+                                updated = datetime.fromisoformat(updated_at)
+                                if (datetime.now() - updated).total_seconds() > self.ttl_hours * 3600:
+                                    path.unlink()
+                                    cleaned += 1
+                                    logger.debug(f"Cleaned expired session file: {path.name}")
+            except Exception:
+                continue
+
+        if cleaned > 0:
+            logger.info(f"Cleaned up {cleaned} expired sessions")
+
+        return cleaned
     
     def _load(self, key: str) -> Session | None:
         """Load a session from disk."""
