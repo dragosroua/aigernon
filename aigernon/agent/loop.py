@@ -158,10 +158,17 @@ class AgentLoop:
         
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
-        
+
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
-        
+
+        # Set audit context for tool registry
+        self.tools.set_context(
+            user_id=msg.sender_id,
+            channel=msg.channel,
+            session_key=msg.session_key,
+        )
+
         # Update tool contexts
         message_tool = self.tools.get("message")
         if isinstance(message_tool, MessageTool):
@@ -270,7 +277,14 @@ class AgentLoop:
         # Use the origin session for context
         session_key = f"{origin_channel}:{origin_chat_id}"
         session = self.sessions.get_or_create(session_key)
-        
+
+        # Set audit context for tool registry
+        self.tools.set_context(
+            user_id=msg.sender_id,
+            channel=origin_channel,
+            session_key=session_key,
+        )
+
         # Update tool contexts
         message_tool = self.tools.get("message")
         if isinstance(message_tool, MessageTool):
