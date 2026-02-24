@@ -2138,5 +2138,262 @@ def security_audit(
     console.print(table)
 
 
+# ============================================================================
+# Vector Memory Commands
+# ============================================================================
+
+vector_app = typer.Typer(help="Vector memory management")
+app.add_typer(vector_app, name="vector")
+
+
+def _get_vector_store():
+    """Get configured VectorStore instance."""
+    from aigernon.config.loader import load_config, get_data_dir
+    from aigernon.memory.vector import create_vector_store
+
+    config = load_config()
+    data_dir = get_data_dir()
+
+    # Get API key from provider config
+    api_key = config.get_api_key()
+    api_base = config.get_api_base()
+
+    return create_vector_store(
+        data_dir=data_dir,
+        api_key=api_key,
+        api_base=api_base,
+        embedding_model=config.vector.embedding_model,
+    )
+
+
+@vector_app.command("status")
+def vector_status():
+    """Show vector memory status."""
+    from aigernon.config.loader import load_config
+
+    config = load_config()
+
+    console.print(f"{__logo__} Vector Memory Status\n")
+
+    console.print(f"Enabled: {'[green]yes[/green]' if config.vector.enabled else '[dim]no[/dim]'}")
+    console.print(f"Embedding model: {config.vector.embedding_model}")
+    console.print(f"Chunk size: {config.vector.chunk_size} words")
+    console.print(f"Max results: {config.vector.max_results}")
+
+    try:
+        store = _get_vector_store()
+        stats = store.get_stats()
+
+        console.print(f"\nStorage: {stats['persist_directory']}")
+
+        if stats["collections"]:
+            table = Table(title="Collections")
+            table.add_column("Collection", style="cyan")
+            table.add_column("Documents", justify="right")
+
+            for name, data in stats["collections"].items():
+                table.add_row(name, str(data["count"]))
+
+            console.print(table)
+        else:
+            console.print("\n[dim]No collections yet. Import content to get started.[/dim]")
+
+    except ImportError:
+        console.print("\n[yellow]ChromaDB not installed.[/yellow]")
+        console.print("Install with: [cyan]pip install aigernon[vector][/cyan]")
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+
+
+@vector_app.command("search")
+def vector_search(
+    query: str = typer.Argument(..., help="Search query"),
+    collection: str = typer.Option("memories", "--collection", "-c", help="Collection to search"),
+    limit: int = typer.Option(5, "--limit", "-n", help="Maximum results"),
+):
+    """Search vector memory."""
+    try:
+        store = _get_vector_store()
+        results = store.search(collection, query, n_results=limit)
+
+        if not results:
+            console.print("No results found.")
+            return
+
+        console.print(f"Found {len(results)} results:\n")
+
+        for i, result in enumerate(results, 1):
+            score_color = "green" if result.score > 0.8 else "yellow" if result.score > 0.6 else "dim"
+            console.print(f"[bold]{i}.[/bold] [{score_color}]{result.score:.2f}[/]")
+
+            # Show metadata
+            title = result.metadata.get("title", "")
+            source = result.metadata.get("source", "")
+            if title:
+                console.print(f"   [cyan]{title}[/cyan]")
+            if source:
+                console.print(f"   [dim]Source: {source}[/dim]")
+
+            # Show preview
+            preview = result.text[:200] + "..." if len(result.text) > 200 else result.text
+            console.print(f"   {preview}\n")
+
+    except ImportError:
+        console.print("[red]ChromaDB not installed.[/red]")
+        console.print("Install with: [cyan]pip install aigernon[vector][/cyan]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@vector_app.command("clear")
+def vector_clear(
+    collection: str = typer.Option(None, "--collection", "-c", help="Collection to clear (all if not specified)"),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Confirm deletion"),
+):
+    """Clear vector memory data."""
+    if not confirm:
+        if collection:
+            console.print(f"[yellow]This will delete all data in collection '{collection}'.[/yellow]")
+        else:
+            console.print("[yellow]This will delete ALL vector memory data.[/yellow]")
+        console.print("Run with --yes to confirm.")
+        raise typer.Exit(1)
+
+    try:
+        store = _get_vector_store()
+
+        if collection:
+            store.delete_collection(collection)
+            console.print(f"[green]✓[/green] Cleared collection: {collection}")
+        else:
+            store.reset()
+            console.print("[green]✓[/green] Cleared all vector memory data")
+
+    except ImportError:
+        console.print("[red]ChromaDB not installed.[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# ============================================================================
+# Import Commands
+# ============================================================================
+
+import_app = typer.Typer(help="Import content into vector memory")
+app.add_typer(import_app, name="import")
+
+
+@import_app.command("markdown")
+def import_markdown(
+    path: Path = typer.Argument(..., help="Path to markdown files directory"),
+    collection: str = typer.Option("blog", "--collection", "-c", help="Collection to import into"),
+    pattern: str = typer.Option("**/*.md", "--pattern", "-p", help="Glob pattern for files"),
+    exclude: list[str] = typer.Option(None, "--exclude", "-e", help="Patterns to exclude"),
+):
+    """Import markdown files into vector memory."""
+    from aigernon.importers.markdown import MarkdownImporter
+    from aigernon.memory.chunker import TextChunker
+    from aigernon.config.loader import load_config
+
+    config = load_config()
+
+    if not path.exists():
+        console.print(f"[red]Path does not exist: {path}[/red]")
+        raise typer.Exit(1)
+
+    try:
+        store = _get_vector_store()
+        chunker = TextChunker(
+            chunk_size=config.vector.chunk_size,
+            overlap=config.vector.chunk_overlap,
+        )
+
+        def on_progress(current: int, total: int, message: str):
+            console.print(f"[{current}/{total}] {message}")
+
+        importer = MarkdownImporter(
+            vector_store=store,
+            collection=collection,
+            chunker=chunker,
+            on_progress=on_progress,
+        )
+
+        console.print(f"Importing markdown files from {path}...")
+        result = importer.import_all(
+            path=path,
+            pattern=pattern,
+            exclude_patterns=exclude or ["**/node_modules/**", "**/.git/**"],
+        )
+
+        if result.success:
+            console.print(f"\n[green]✓[/green] Import complete: {result}")
+        else:
+            console.print(f"\n[red]✗[/red] Import failed: {result}")
+            raise typer.Exit(1)
+
+    except ImportError:
+        console.print("[red]ChromaDB not installed.[/red]")
+        console.print("Install with: [cyan]pip install aigernon[vector][/cyan]")
+        raise typer.Exit(1)
+
+
+@import_app.command("wordpress")
+def import_wordpress(
+    url: str = typer.Argument(..., help="WordPress GraphQL endpoint URL"),
+    collection: str = typer.Option("blog", "--collection", "-c", help="Collection to import into"),
+    batch_size: int = typer.Option(100, "--batch-size", "-b", help="Posts per batch"),
+    max_posts: int = typer.Option(None, "--max", "-m", help="Maximum posts to import"),
+    categories: list[str] = typer.Option(None, "--category", help="Filter by category slugs"),
+):
+    """Import WordPress posts via GraphQL."""
+    from aigernon.importers.wordpress import WordPressImporter
+    from aigernon.memory.chunker import TextChunker
+    from aigernon.config.loader import load_config
+
+    config = load_config()
+
+    try:
+        store = _get_vector_store()
+        chunker = TextChunker(
+            chunk_size=config.vector.chunk_size,
+            overlap=config.vector.chunk_overlap,
+        )
+
+        def on_progress(current: int, total: int, message: str):
+            console.print(f"[{current}/{total}] {message}")
+
+        importer = WordPressImporter(
+            vector_store=store,
+            collection=collection,
+            chunker=chunker,
+            on_progress=on_progress,
+        )
+
+        console.print(f"Importing from {url}...")
+        result = importer.import_all(
+            graphql_url=url,
+            batch_size=batch_size,
+            max_posts=max_posts,
+            categories=categories,
+        )
+
+        if result.success:
+            console.print(f"\n[green]✓[/green] Import complete: {result}")
+        else:
+            console.print(f"\n[red]✗[/red] Import failed: {result}")
+            for error in result.errors[:5]:
+                console.print(f"  [red]• {error}[/red]")
+            raise typer.Exit(1)
+
+    except ImportError:
+        console.print("[red]ChromaDB not installed.[/red]")
+        console.print("Install with: [cyan]pip install aigernon[vector][/cyan]")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

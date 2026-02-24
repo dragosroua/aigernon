@@ -133,6 +133,18 @@ class SecurityConfig(BaseModel):
     session_ttl_hours: int = 24  # Session expiry time (0 = no expiry)
 
 
+class VectorConfig(BaseModel):
+    """Vector memory configuration."""
+    enabled: bool = False  # Enable vector memory (requires chromadb)
+    embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
+    embedding_provider: str = "openai"  # Provider for embeddings (openai, openrouter)
+    chunk_size: int = 500  # Words per chunk
+    chunk_overlap: int = 50  # Overlap between chunks in words
+    similarity_threshold: float = 0.7  # Minimum similarity score for results
+    max_results: int = 10  # Maximum results per query
+    collections: list[str] = Field(default_factory=lambda: ["memories", "blog", "diary"])  # Enabled collections
+
+
 class ToolsConfig(BaseModel):
     """Tools configuration."""
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
@@ -148,6 +160,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    vector: VectorConfig = Field(default_factory=VectorConfig)
     
     @property
     def workspace_path(self) -> Path:

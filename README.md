@@ -98,6 +98,26 @@ Ideas → Projects → Tasks → Versions → Release
 - **Telegram**: Always-on bot
 - **Discord, WhatsApp, Feishu, DingTalk**: Additional channels
 
+### Vector Memory
+
+Semantic search across all your memories, blog posts, and documents using ChromaDB:
+
+```bash
+# Install vector support
+pip install aigernon[vector]
+
+# Import your blog posts
+aigernon import markdown ~/blog/posts --collection blog
+
+# Or from WordPress
+aigernon import wordpress https://example.com/graphql
+
+# Search semantically
+aigernon vector search "productivity tips" --collection blog
+```
+
+[Vector Memory documentation →](docs/VECTOR_MEMORY.md)
+
 ### Daemon Mode
 
 Run AIGernon as a system service that survives reboots and auto-restarts on crash:
@@ -173,6 +193,7 @@ aigernon channel telegram
 | [ADD Framework](docs/ADD_FRAMEWORK.md) | Core cognitive framework |
 | [Coaching Module](docs/COACHING.md) | Between-session client support |
 | [Projects Module](docs/PROJECTS.md) | iOS development workflow |
+| [Vector Memory](docs/VECTOR_MEMORY.md) | Semantic search and retrieval |
 | [Daemon & Service](docs/DAEMON.md) | Running as a system service |
 | [Skills System](aigernon/skills/README.md) | Extensible capabilities |
 | [Security](docs/SECURITY.md) | Security features and hardening |
@@ -223,6 +244,24 @@ aigernon daemon logs -f       # Follow logs
 aigernon doctor               # Health check
 ```
 
+### Vector Memory
+
+```bash
+aigernon vector status                    # Show vector memory status
+aigernon vector search "query"            # Search across memory
+aigernon vector search "query" -c blog    # Search specific collection
+aigernon vector clear -c blog --yes       # Clear a collection
+```
+
+### Import
+
+```bash
+aigernon import markdown ~/posts          # Import markdown files
+aigernon import markdown ~/posts -p "*.mdx"  # Custom pattern
+aigernon import wordpress URL             # Import from WordPress GraphQL
+aigernon import wordpress URL --max 100   # Limit import
+```
+
 ---
 
 ## Architecture
@@ -233,6 +272,9 @@ aigernon doctor               # Health check
 ├── daemon.pid               # Daemon process ID
 ├── daemon.status.json       # Daemon status (heartbeat, channels)
 ├── sessions/                # Conversation history
+├── vectordb/                # Vector memory (ChromaDB)
+│   ├── chroma.sqlite3
+│   └── *.parquet
 ├── logs/
 │   └── daemon.log           # Daemon output
 └── workspace/
