@@ -1,0 +1,38 @@
+# Caddyfile for AIGernon
+# Replace 'yourdomain.com' with your actual domain
+
+{
+    # Global options
+    email admin@yourdomain.com
+}
+
+# Main app - serves frontend
+yourdomain.com {
+    reverse_proxy web:3000
+}
+
+# API subdomain
+api.yourdomain.com {
+    reverse_proxy api:8000
+}
+
+# Alternative: Single domain with path-based routing
+# Uncomment below and comment out the above if you prefer /api/* routing
+
+# yourdomain.com {
+#     # API routes
+#     handle /api/* {
+#         uri strip_prefix /api
+#         reverse_proxy api:8000
+#     }
+#
+#     # WebSocket for chat
+#     handle /chat/ws {
+#         reverse_proxy api:8000
+#     }
+#
+#     # Everything else goes to frontend
+#     handle {
+#         reverse_proxy web:3000
+#     }
+# }

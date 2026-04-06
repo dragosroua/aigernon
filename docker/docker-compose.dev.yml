@@ -1,0 +1,22 @@
+version: '3.8'
+
+# Development docker-compose
+# Use: docker compose -f docker/docker-compose.dev.yml up
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: aigernon-api-dev
+    environment:
+      - AIGERNON_CONFIG=/data/config.json
+    volumes:
+      - ../aigernon:/app/aigernon:ro  # Mount source for hot reload
+      - aigernon-data-dev:/data
+    ports:
+      - "8000:8000"
+    command: ["aigernon", "api", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+volumes:
+  aigernon-data-dev:

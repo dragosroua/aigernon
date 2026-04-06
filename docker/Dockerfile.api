@@ -1,0 +1,29 @@
+# AIGernon API Dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for caching
+COPY pyproject.toml ./
+COPY aigernon/ ./aigernon/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -e ".[api]"
+
+# Create data directory
+RUN mkdir -p /data
+
+# Expose port
+EXPOSE 8000
+
+# Environment
+ENV AIGERNON_CONFIG=/data/config.json
+ENV PYTHONUNBUFFERED=1
+
+# Run API server
+CMD ["aigernon", "api", "--host", "0.0.0.0", "--port", "8000"]

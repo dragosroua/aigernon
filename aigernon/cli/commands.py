@@ -302,6 +302,71 @@ def _make_provider(config):
 
 
 # ============================================================================
+# API Server
+# ============================================================================
+
+
+@app.command()
+def api(
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Host to bind to"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to bind to"),
+    reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload"),
+    workers: int = typer.Option(1, "--workers", "-w", help="Number of workers"),
+    standalone: bool = typer.Option(False, "--standalone", "-s", help="Run without agent (for testing UI)"),
+):
+    """Start the AIGernon API server for web UI."""
+    from aigernon.config.loader import load_config, get_data_dir
+
+    config = load_config()
+
+    console.print(f"{__logo__} Starting AIGernon API server...")
+    console.print(f"  Host: {host}")
+    console.print(f"  Port: {port}")
+    console.print(f"  Reload: {reload}")
+    console.print(f"  Workers: {workers}")
+    console.print(f"  Standalone: {standalone}")
+    console.print(f"\n  API docs: http://{host}:{port}/docs")
+    console.print(f"  Web UI: http://localhost:3000 (when running)\n")
+
+    if reload or standalone:
+        # Use uvicorn's reload mode or standalone mode (no agent)
+        from aigernon.api.app import run_server
+        run_server(host=host, port=port, reload=reload, workers=workers)
+    else:
+        # Full mode with agent
+        import uvicorn
+        from aigernon.bus.queue import MessageBus
+        from aigernon.agent.loop import AgentLoop
+        from aigernon.session.manager import SessionManager
+        from aigernon.api.app import create_app
+
+        data_dir = get_data_dir()
+        bus = MessageBus()
+        provider = _make_provider(config)
+        session_manager = SessionManager(config.workspace_path, ttl_hours=config.security.session_ttl_hours)
+
+        # Create agent
+        agent = AgentLoop(
+            bus=bus,
+            provider=provider,
+            workspace=config.workspace_path,
+            model=config.agents.defaults.model,
+            max_iterations=config.agents.defaults.max_tool_iterations,
+            brave_api_key=config.tools.web.search.api_key or None,
+            exec_config=config.tools.exec,
+            restrict_to_workspace=config.tools.restrict_to_workspace,
+            session_manager=session_manager,
+        )
+
+        console.print("[green]✓[/green] Agent initialized")
+
+        # Create app with agent
+        app_instance = create_app(agent_loop=agent)
+
+        uvicorn.run(app_instance, host=host, port=port)
+
+
+# ============================================================================
 # Gateway / Server
 # ============================================================================
 

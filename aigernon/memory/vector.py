@@ -54,20 +54,32 @@ class VectorStore:
         if self._client is None:
             try:
                 import chromadb
-                from chromadb.config import Settings
             except ImportError:
                 raise ImportError(
                     "chromadb is required for vector memory. "
                     "Install with: pip install aigernon[vector]"
                 )
 
-            self._client = chromadb.PersistentClient(
-                path=str(self.persist_directory),
-                settings=Settings(
-                    anonymized_telemetry=False,
-                    allow_reset=True,
-                ),
-            )
+            # Use simple PersistentClient without custom settings
+            # to avoid version compatibility issues
+            try:
+                self._client = chromadb.PersistentClient(
+                    path=str(self.persist_directory),
+                )
+            except Exception as e:
+                # If there's a database corruption/version issue, try resetting
+                if "infer type" in str(e) or "chroma_server" in str(e):
+                    import shutil
+                    # Clear corrupted database
+                    if self.persist_directory.exists():
+                        shutil.rmtree(self.persist_directory)
+                    self.persist_directory.mkdir(parents=True, exist_ok=True)
+                    # Try again with fresh database
+                    self._client = chromadb.PersistentClient(
+                        path=str(self.persist_directory),
+                    )
+                else:
+                    raise
         return self._client
 
     def _get_embedding_function(self):
