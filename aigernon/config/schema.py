@@ -145,6 +145,26 @@ class VectorConfig(BaseModel):
     collections: list[str] = Field(default_factory=lambda: ["memories", "blog", "diary"])  # Enabled collections
 
 
+class OAuthConfig(BaseModel):
+    """OAuth configuration for web UI."""
+    provider: str = "google"  # google, github
+    client_id: str = ""
+    client_secret: str = ""
+    allowed_emails: list[str] = Field(default_factory=list)  # Empty = allow all
+
+
+class APIConfig(BaseModel):
+    """API server configuration for web UI."""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8000
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    frontend_url: str = "http://localhost:3000"  # Frontend URL for OAuth redirects
+    jwt_secret: str = ""  # Auto-generated if not set
+    jwt_expire_days: int = 7
+    oauth: OAuthConfig = Field(default_factory=OAuthConfig)
+
+
 class ToolsConfig(BaseModel):
     """Tools configuration."""
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
@@ -161,6 +181,7 @@ class Config(BaseSettings):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     vector: VectorConfig = Field(default_factory=VectorConfig)
+    api: APIConfig = Field(default_factory=APIConfig)
     
     @property
     def workspace_path(self) -> Path:
