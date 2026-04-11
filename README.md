@@ -353,6 +353,7 @@ docker run -v ~/.aigernon:/root/.aigernon aigernon agent -m "Hello"
 
 - [addTaskManager](https://itunes.apple.com/app/apple-store/id1492487688?mt=8) — Native iOS/macOS ADD task manager
 - [ADD Framework Skills](https://github.com/dragosroua/add-framework-skills) — Agnostic skill collection
+- [AIGernon on Zo Computer](https://www.linkedin.com/feed/update/urn:li:activity:7448392053300019200/)
 
 ## License
 
