@@ -257,7 +257,7 @@ class AgentLoop:
                 final_content = response.content
                 break
 
-        if final_content is None:
+        if not final_content:
             final_content = "I've completed processing but have no response to give."
 
         # Log response preview
@@ -369,7 +369,7 @@ class AgentLoop:
                 final_content = response.content
                 break
 
-        if final_content is None:
+        if not final_content:
             final_content = "Background task completed."
         
         # Save to session (mark as system message in history)
