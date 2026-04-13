@@ -105,11 +105,14 @@ class AgentLoop:
         # Web tools
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
         self.tools.register(WebFetchTool())
-        
-        # Message tool
-        message_tool = MessageTool(send_callback=self.bus.publish_outbound)
-        self.tools.register(message_tool)
-        
+
+        # Message tool — only in CLI/daemon mode where outbound bus is consumed.
+        # In web mode the bus is never read; registering it causes the model to
+        # call message() for confirmations and then return content=None.
+        if not self.web_mode:
+            message_tool = MessageTool(send_callback=self.bus.publish_outbound)
+            self.tools.register(message_tool)
+
         # Spawn tool (for subagents)
         spawn_tool = SpawnTool(manager=self.subagents)
         self.tools.register(spawn_tool)
