@@ -27,6 +27,8 @@ class CronPayload:
     deliver: bool = False
     channel: str | None = None  # e.g. "whatsapp"
     to: str | None = None  # e.g. phone number
+    # Per-job channel filter: None = all linked channels, [] = no delivery, ["email"] = email only
+    deliver_channels: list[str] | None = None
 
 
 @dataclass
@@ -50,6 +52,8 @@ class CronJob:
     created_at_ms: int = 0
     updated_at_ms: int = 0
     delete_after_run: bool = False
+    instance_id: str | None = None  # Scoped to a specific AIGernon instance
+    user_id: str | None = None  # Owner — used for channel delivery
 
 
 @dataclass

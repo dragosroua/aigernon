@@ -14,6 +14,7 @@ from aigernon.agent.context import ContextBuilder
 from aigernon.agent.tools.registry import ToolRegistry
 from aigernon.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from aigernon.agent.tools.shell import ExecTool
+from aigernon.agent.tools.git import GitTool
 from aigernon.agent.tools.web import WebSearchTool, WebFetchTool
 from aigernon.agent.tools.message import MessageTool
 from aigernon.agent.tools.spawn import SpawnTool
@@ -46,6 +47,7 @@ class AgentLoop:
         cron_service: "CronService | None" = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
+        web_mode: bool = False,
     ):
         from aigernon.config.schema import ExecToolConfig
         from aigernon.cron.service import CronService
@@ -58,6 +60,7 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.web_mode = web_mode
         
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -70,6 +73,7 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            web_mode=web_mode,
         )
         
         self._running = False
@@ -84,12 +88,19 @@ class AgentLoop:
         self.tools.register(EditFileTool(allowed_dir=allowed_dir))
         self.tools.register(ListDirTool(allowed_dir=allowed_dir))
         
-        # Shell tool
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
-            timeout=self.exec_config.timeout,
-            restrict_to_workspace=self.restrict_to_workspace,
-        ))
+        if self.web_mode:
+            # Web/API mode: GitTool only — no arbitrary shell execution
+            self.tools.register(GitTool(workspace=self.workspace))
+        else:
+            # CLI/daemon mode: full ExecTool + GitTool for convenience
+            workspaces_dir = str(self.workspace.parent / "workspaces")
+            self.tools.register(ExecTool(
+                working_dir=str(self.workspace),
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.restrict_to_workspace,
+                extra_allowed_dirs=[workspaces_dir] if self.restrict_to_workspace else [],
+            ))
+            self.tools.register(GitTool(workspace=self.workspace))
         
         # Web tools
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
@@ -159,6 +170,12 @@ class AgentLoop:
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
 
+        # Compute instance-scoped allowed_dir for filesystem tools (Fix D)
+        instance_id = getattr(msg, "instance_id", None)
+        instance_allowed_dir = (
+            self.workspace / "instances" / instance_id if instance_id else None
+        )
+
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
 
@@ -189,6 +206,7 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            instance_id=getattr(msg, "instance_id", None),
         )
         
         # Agent loop
@@ -224,11 +242,13 @@ class AgentLoop:
                     reasoning_content=response.reasoning_content,
                 )
                 
-                # Execute tools
+                # Execute tools — inject instance-scoped allowed_dir (Fix D)
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await self.tools.execute(
+                        tool_call.name, tool_call.arguments, allowed_dir=instance_allowed_dir
+                    )
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
@@ -236,14 +256,14 @@ class AgentLoop:
                 # No tool calls, we're done
                 final_content = response.content
                 break
-        
+
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
-        
+
         # Log response preview
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
-        
+
         # Save to session
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content)
@@ -339,14 +359,16 @@ class AgentLoop:
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await self.tools.execute(
+                        tool_call.name, tool_call.arguments, allowed_dir=None
+                    )
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
             else:
                 final_content = response.content
                 break
-        
+
         if final_content is None:
             final_content = "Background task completed."
         
@@ -367,6 +389,7 @@ class AgentLoop:
         session_key: str = "cli:direct",
         channel: str = "cli",
         chat_id: str = "direct",
+        instance_id: str | None = None,
     ) -> str:
         """
         Process a message directly (for CLI or cron usage).
@@ -384,7 +407,8 @@ class AgentLoop:
             channel=channel,
             sender_id="user",
             chat_id=chat_id,
-            content=content
+            content=content,
+            instance_id=instance_id,
         )
         
         response = await self._process_message(msg)

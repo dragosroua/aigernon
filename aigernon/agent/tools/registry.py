@@ -1,5 +1,6 @@
 """Tool registry for dynamic tool management."""
 
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -63,56 +64,59 @@ class ToolRegistry:
         """Get all tool definitions in OpenAI format."""
         return [tool.to_schema() for tool in self._tools.values()]
     
-    async def execute(self, name: str, params: dict[str, Any]) -> str:
+    async def execute(self, name: str, params: dict[str, Any], allowed_dir: Path | None = None) -> str:
         """
         Execute a tool by name with given parameters.
 
-        Includes input sanitization and audit logging.
+        Includes input sanitization, audit logging, and trusted allowed_dir injection.
 
         Args:
             name: Tool name.
-            params: Tool parameters.
+            params: Tool parameters from the LLM (untrusted).
+            allowed_dir: Trusted path restriction injected by the agent loop (not LLM-controlled).
 
         Returns:
             Tool execution result as string.
-
-        Raises:
-            KeyError: If tool not found.
         """
         tool = self._tools.get(name)
         if not tool:
             self._log_tool_call(name, params, success=False, error="Tool not found")
             return f"Error: Tool '{name}' not found"
 
+        # Strip any underscore-prefixed params — these are internal/trusted params
+        # the LLM must never be able to inject (e.g. _allowed_dir).
+        clean_params = {k: v for k, v in params.items() if not k.startswith("_")}
+
         # Input sanitization
         if self._sanitizer:
-            sanitization_result = self._sanitizer.sanitize_tool_params(name, params)
+            sanitization_result = self._sanitizer.sanitize_tool_params(name, clean_params)
             if not sanitization_result.safe:
                 self._log_tool_call(
-                    name, params,
+                    name, clean_params,
                     success=False,
                     error=f"Input blocked: {sanitization_result.blocked_reason}"
                 )
                 return f"Error: Input blocked by security filter: {sanitization_result.blocked_reason}"
-            # Use sanitized params
-            params = sanitization_result.sanitized_value
+            clean_params = sanitization_result.sanitized_value
 
         try:
-            errors = tool.validate_params(params)
+            errors = tool.validate_params(clean_params)
             if errors:
                 error_msg = "; ".join(errors)
-                self._log_tool_call(name, params, success=False, error=f"Validation: {error_msg}")
+                self._log_tool_call(name, clean_params, success=False, error=f"Validation: {error_msg}")
                 return f"Error: Invalid parameters for tool '{name}': {error_msg}"
 
-            result = await tool.execute(**params)
+            # Inject trusted allowed_dir for filesystem tools (Fix D)
+            if allowed_dir is not None and hasattr(tool, "_allowed_dir"):
+                result = await tool.execute(**clean_params, _allowed_dir=allowed_dir)
+            else:
+                result = await tool.execute(**clean_params)
 
-            # Log successful execution
-            self._log_tool_call(name, params, success=True, result_preview=result)
-
+            self._log_tool_call(name, clean_params, success=True, result_preview=result)
             return result
         except Exception as e:
             error_msg = str(e)
-            self._log_tool_call(name, params, success=False, error=error_msg)
+            self._log_tool_call(name, clean_params, success=False, error=error_msg)
             return f"Error executing {name}: {error_msg}"
 
     def _log_tool_call(

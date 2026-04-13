@@ -251,6 +251,40 @@ Information about the user goes here.
 - Timezone: (your timezone)
 - Language: (your preferred language)
 """,
+        "PROJECTS.md": """# Projects
+
+Projects are tracked on disk and follow the Assess → Decide → Do workflow.
+
+## Directory Layout
+
+Each project lives at one of:
+- `{workspace}/projects/{project-id}/`          (global)
+- `{workspace}/instances/{instance-id}/projects/{project-id}/`  (instance-scoped)
+
+Inside every project directory:
+- `project.yaml`  — name, realm, repo URL, current_version
+- `tasks/`        — one YAML file per task (001.yaml, 002.yaml, …)
+- `versions/`     — one YAML file per version (1_0_0.yaml, …)
+
+## How to Navigate
+
+Use `list_dir` to browse your projects (never browse the instances/ parent):
+```
+list_dir {workspace}/projects/
+list_dir {workspace}/instances/{your-instance-id}/projects/
+```
+
+Use `read_file` to inspect a project:
+```
+read_file {workspace}/instances/{your-instance-id}/projects/{project-id}/project.yaml
+```
+
+## Realms
+
+- **Assess** — exploring, defining tasks (all tasks start here)
+- **Decide** — committing tasks to a version
+- **Do**     — executing tasks, building features
+""",
     }
     
     for filename, content in templates.items():
@@ -340,16 +374,28 @@ def api(
         from aigernon.session.manager import SessionManager
         from aigernon.api.app import create_app
 
+        import os
         data_dir = get_data_dir()
+
+        # Resolve workspace the same way create_app does, so agent and API use the same path
+        env_ws = os.environ.get("AIGERNON_WORKSPACE", "")
+        if env_ws:
+            workspace = Path(env_ws).expanduser()
+        elif Path("/data").exists():
+            workspace = Path("/data/workspace")
+        else:
+            workspace = config.workspace_path
+        workspace.mkdir(parents=True, exist_ok=True)
+
         bus = MessageBus()
         provider = _make_provider(config)
-        session_manager = SessionManager(config.workspace_path, ttl_hours=config.security.session_ttl_hours)
+        session_manager = SessionManager(workspace, ttl_hours=config.security.session_ttl_hours)
 
         # Create agent
         agent = AgentLoop(
             bus=bus,
             provider=provider,
-            workspace=config.workspace_path,
+            workspace=workspace,
             model=config.agents.defaults.model,
             max_iterations=config.agents.defaults.max_tool_iterations,
             brave_api_key=config.tools.web.search.api_key or None,
@@ -360,8 +406,8 @@ def api(
 
         console.print("[green]✓[/green] Agent initialized")
 
-        # Create app with agent
-        app_instance = create_app(agent_loop=agent)
+        # Create app with agent (pass resolved workspace so both use the same path)
+        app_instance = create_app(agent_loop=agent, workspace=workspace)
 
         uvicorn.run(app_instance, host=host, port=port)
 
@@ -461,13 +507,19 @@ def gateway(
             channel=job.payload.channel or "cli",
             chat_id=job.payload.to or "direct",
         )
-        if job.payload.deliver and job.payload.to:
-            from aigernon.bus.events import OutboundMessage
-            await bus.publish_outbound(OutboundMessage(
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to,
-                content=response or ""
-            ))
+        # Deliver to all linked channels for job owner
+        if response and job.user_id:
+            try:
+                from aigernon.integrations.router import ChannelRouter
+                from aigernon.integrations.email.sender import EmailSender
+                from aigernon.integrations.telegram.sender import TelegramSender
+                from aigernon.api import deps as _api_deps
+
+                cr = _api_deps._channel_router
+                if cr:
+                    await cr.deliver(job.user_id, job.name, response)
+            except Exception:
+                pass
         return response
     cron.on_job = on_cron_job
 

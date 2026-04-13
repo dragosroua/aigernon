@@ -80,6 +80,7 @@ class CronService:
                             deliver=j["payload"].get("deliver", False),
                             channel=j["payload"].get("channel"),
                             to=j["payload"].get("to"),
+                            deliver_channels=j["payload"].get("deliverChannels"),
                         ),
                         state=CronJobState(
                             next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
@@ -90,6 +91,8 @@ class CronService:
                         created_at_ms=j.get("createdAtMs", 0),
                         updated_at_ms=j.get("updatedAtMs", 0),
                         delete_after_run=j.get("deleteAfterRun", False),
+                        instance_id=j.get("instanceId"),
+                        user_id=j.get("userId"),
                     ))
                 self._store = CronStore(jobs=jobs)
             except Exception as e:
@@ -127,6 +130,7 @@ class CronService:
                         "deliver": j.payload.deliver,
                         "channel": j.payload.channel,
                         "to": j.payload.to,
+                        "deliverChannels": j.payload.deliver_channels,
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -137,6 +141,8 @@ class CronService:
                     "createdAtMs": j.created_at_ms,
                     "updatedAtMs": j.updated_at_ms,
                     "deleteAfterRun": j.delete_after_run,
+                    "instanceId": j.instance_id,
+                    "userId": j.user_id,
                 }
                 for j in self._store.jobs
             ]
@@ -248,10 +254,12 @@ class CronService:
     
     # ========== Public API ==========
     
-    def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
-        """List all jobs."""
+    def list_jobs(self, include_disabled: bool = False, instance_id: str | None = None) -> list[CronJob]:
+        """List jobs, optionally filtered by instance."""
         store = self._load_store()
         jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
+        if instance_id is not None:
+            jobs = [j for j in jobs if j.instance_id == instance_id]
         return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float('inf'))
     
     def add_job(
@@ -262,7 +270,10 @@ class CronService:
         deliver: bool = False,
         channel: str | None = None,
         to: str | None = None,
+        deliver_channels: list[str] | None = None,
         delete_after_run: bool = False,
+        instance_id: str | None = None,
+        user_id: str | None = None,
     ) -> CronJob:
         """Add a new job."""
         store = self._load_store()
@@ -279,11 +290,14 @@ class CronService:
                 deliver=deliver,
                 channel=channel,
                 to=to,
+                deliver_channels=deliver_channels,
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,
             updated_at_ms=now,
             delete_after_run=delete_after_run,
+            instance_id=instance_id,
+            user_id=user_id,
         )
         
         store.jobs.append(job)
@@ -293,6 +307,29 @@ class CronService:
         logger.info(f"Cron: added job '{name}' ({job.id})")
         return job
     
+    def update_job(
+        self,
+        job_id: str,
+        name: str | None = None,
+        message: str | None = None,
+        deliver_channels: list[str] | None = None,
+        update_deliver_channels: bool = False,
+    ) -> CronJob | None:
+        """Update name, message, and/or deliver_channels of a job."""
+        store = self._load_store()
+        for job in store.jobs:
+            if job.id == job_id:
+                if name is not None:
+                    job.name = name
+                if message is not None:
+                    job.payload.message = message
+                if update_deliver_channels:
+                    job.payload.deliver_channels = deliver_channels
+                job.updated_at_ms = _now_ms()
+                self._save_store()
+                return job
+        return None
+
     def remove_job(self, job_id: str) -> bool:
         """Remove a job by ID."""
         store = self._load_store()

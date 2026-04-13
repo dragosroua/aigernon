@@ -696,7 +696,7 @@ class ProjectStore:
         issues = []
         for task in tasks:
             if task.get("status") != "ready":
-                issues.append(f"Task {task['id']} '{task['title']}' is {task.get('status')}, not ready")
+                issues.append(f"Task '{task['title']}' must be marked as Defined before moving to Decide")
 
         return len(issues) == 0, issues
 
@@ -723,7 +723,7 @@ class ProjectStore:
         issues = []
         for task in tasks:
             if task.get("status") != "scheduled":
-                issues.append(f"Task {task['id']} '{task['title']}' is {task.get('status')}, not scheduled")
+                issues.append(f"Task '{task['title']}' must be Committed to a version before moving to Do")
 
         return len(issues) == 0, issues
 
@@ -1139,6 +1139,9 @@ class ProjectStore:
             status = ", ".join(status_parts) if status_parts else "no tasks"
 
             version_str = f" v{current_version}" if current_version else ""
-            lines.append(f"- {name}{version_str} ({realm}): {status}")
+            repo = project.get("repo", "")
+            disk_path = str(self._project_dir(project_id))
+            repo_str = f" | repo: {repo}" if repo else ""
+            lines.append(f"- {name}{version_str} ({realm}): {status}{repo_str} | path: {disk_path}")
 
         return "\n".join(lines)

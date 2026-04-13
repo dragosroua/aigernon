@@ -14,6 +14,7 @@ from aigernon.providers.base import LLMProvider
 from aigernon.agent.tools.registry import ToolRegistry
 from aigernon.agent.tools.filesystem import ReadFileTool, WriteFileTool, ListDirTool
 from aigernon.agent.tools.shell import ExecTool
+from aigernon.agent.tools.git import GitTool
 from aigernon.agent.tools.web import WebSearchTool, WebFetchTool
 
 
@@ -35,6 +36,7 @@ class SubagentManager:
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        web_mode: bool = False,
     ):
         from aigernon.config.schema import ExecToolConfig
         self.provider = provider
@@ -44,6 +46,7 @@ class SubagentManager:
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.web_mode = web_mode
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -102,11 +105,16 @@ class SubagentManager:
             tools.register(ReadFileTool(allowed_dir=allowed_dir))
             tools.register(WriteFileTool(allowed_dir=allowed_dir))
             tools.register(ListDirTool(allowed_dir=allowed_dir))
-            tools.register(ExecTool(
-                working_dir=str(self.workspace),
-                timeout=self.exec_config.timeout,
-                restrict_to_workspace=self.restrict_to_workspace,
-            ))
+            if self.web_mode:
+                # Web/API mode: GitTool only — no arbitrary shell execution
+                tools.register(GitTool(workspace=self.workspace))
+            else:
+                tools.register(ExecTool(
+                    working_dir=str(self.workspace),
+                    timeout=self.exec_config.timeout,
+                    restrict_to_workspace=self.restrict_to_workspace,
+                ))
+                tools.register(GitTool(workspace=self.workspace))
             tools.register(WebSearchTool(api_key=self.brave_api_key))
             tools.register(WebFetchTool())
             
@@ -225,7 +233,7 @@ You are a subagent spawned by the main agent to complete a specific task.
 
 ## What You Can Do
 - Read and write files in the workspace
-- Execute shell commands
+- Git operations (clone, pull, push, status, log, diff, checkout, add, commit, branch)
 - Search the web and fetch web pages
 - Complete the task thoroughly
 

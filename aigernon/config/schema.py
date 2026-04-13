@@ -150,6 +150,7 @@ class OAuthConfig(BaseModel):
     provider: str = "google"  # google, github
     client_id: str = ""
     client_secret: str = ""
+    redirect_uri: str = ""  # Override auto-detected URI (needed behind reverse proxy)
     allowed_emails: list[str] = Field(default_factory=list)  # Empty = allow all
 
 

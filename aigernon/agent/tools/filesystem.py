@@ -10,7 +10,7 @@ def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
     """Resolve path and optionally enforce directory restriction."""
     resolved = Path(path).expanduser().resolve()
     if allowed_dir and not str(resolved).startswith(str(allowed_dir.resolve())):
-        raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
+        raise PermissionError(f"Path outside allowed directory: {resolved}")
     return resolved
 
 
@@ -41,14 +41,14 @@ class ReadFileTool(Tool):
             "required": ["path"]
         }
     
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, _allowed_dir: Path | None = None, **kwargs: Any) -> str:
         try:
-            file_path = _resolve_path(path, self._allowed_dir)
+            effective_dir = _allowed_dir or self._allowed_dir
+            file_path = _resolve_path(path, effective_dir)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
-            
             content = file_path.read_text(encoding="utf-8")
             return content
         except PermissionError as e:
@@ -88,9 +88,10 @@ class WriteFileTool(Tool):
             "required": ["path", "content"]
         }
     
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, content: str, _allowed_dir: Path | None = None, **kwargs: Any) -> str:
         try:
-            file_path = _resolve_path(path, self._allowed_dir)
+            effective_dir = _allowed_dir or self._allowed_dir
+            file_path = _resolve_path(path, effective_dir)
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
@@ -135,25 +136,20 @@ class EditFileTool(Tool):
             "required": ["path", "old_text", "new_text"]
         }
     
-    async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, old_text: str, new_text: str, _allowed_dir: Path | None = None, **kwargs: Any) -> str:
         try:
-            file_path = _resolve_path(path, self._allowed_dir)
+            effective_dir = _allowed_dir or self._allowed_dir
+            file_path = _resolve_path(path, effective_dir)
             if not file_path.exists():
                 return f"Error: File not found: {path}"
-            
             content = file_path.read_text(encoding="utf-8")
-            
             if old_text not in content:
                 return f"Error: old_text not found in file. Make sure it matches exactly."
-            
-            # Count occurrences
             count = content.count(old_text)
             if count > 1:
                 return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
-            
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")
-            
             return f"Successfully edited {path}"
         except PermissionError as e:
             return f"Error: {e}"
@@ -188,22 +184,20 @@ class ListDirTool(Tool):
             "required": ["path"]
         }
     
-    async def execute(self, path: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, _allowed_dir: Path | None = None, **kwargs: Any) -> str:
         try:
-            dir_path = _resolve_path(path, self._allowed_dir)
+            effective_dir = _allowed_dir or self._allowed_dir
+            dir_path = _resolve_path(path, effective_dir)
             if not dir_path.exists():
                 return f"Error: Directory not found: {path}"
             if not dir_path.is_dir():
                 return f"Error: Not a directory: {path}"
-            
             items = []
             for item in sorted(dir_path.iterdir()):
                 prefix = "📁 " if item.is_dir() else "📄 "
                 items.append(f"{prefix}{item.name}")
-            
             if not items:
                 return f"Directory {path} is empty"
-            
             return "\n".join(items)
         except PermissionError as e:
             return f"Error: {e}"

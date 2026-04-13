@@ -66,6 +66,7 @@ class ExecTool(Tool):
         allow_prefixes: list[str] | None = None,
         restrict_to_workspace: bool = False,
         use_allowlist: bool = True,
+        extra_allowed_dirs: list[str] | None = None,
     ):
         """
         Initialize ExecTool.
@@ -95,7 +96,8 @@ class ExecTool(Tool):
         self.allow_prefixes = allow_prefixes if allow_prefixes is not None else self.DEFAULT_ALLOW_PREFIXES
 
         self.restrict_to_workspace = restrict_to_workspace
-    
+        self.extra_allowed_dirs = [str(Path(d).resolve()) for d in (extra_allowed_dirs or [])]
+
     @property
     def name(self) -> str:
         return "exec"
@@ -238,7 +240,13 @@ class ExecTool(Tool):
                 except Exception:
                     continue
 
-                if cwd_path not in p.parents and p != cwd_path and not str(p).startswith(str(cwd_path)):
+                in_workspace = (
+                    cwd_path in p.parents
+                    or p == cwd_path
+                    or str(p).startswith(str(cwd_path))
+                )
+                in_extra = any(str(p).startswith(d) for d in self.extra_allowed_dirs)
+                if not in_workspace and not in_extra:
                     return "Error: Command blocked by security guard (path outside workspace)"
 
         return None

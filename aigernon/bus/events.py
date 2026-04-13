@@ -16,6 +16,7 @@ class InboundMessage:
     timestamp: datetime = field(default_factory=datetime.now)
     media: list[str] = field(default_factory=list)  # Media URLs
     metadata: dict[str, Any] = field(default_factory=dict)  # Channel-specific data
+    instance_id: str | None = None  # Active instance for workspace scoping
     
     @property
     def session_key(self) -> str:
