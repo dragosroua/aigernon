@@ -195,21 +195,14 @@ Be warm, helpful, and present. You're a companion, not a task bot."""
         workspace is checked — never the global one, to prevent cross-user leakage.
         When instance_id is absent (CLI mode): falls back to the global workspace.
         """
-        import sys
-        print(f"[DEBUG] _get_projects_summary called: instance_id={instance_id!r} workspace={self.workspace}", file=sys.stderr, flush=True)
         try:
             from aigernon.projects.store import ProjectStore
             if instance_id:
                 ws = self.workspace / "instances" / instance_id
-                summary = ProjectStore(ws).get_projects_summary()
-                print(f"[DEBUG] _get_projects_summary result: {summary!r}", file=sys.stderr, flush=True)
-                return summary
+                return ProjectStore(ws).get_projects_summary()
             else:
-                summary = ProjectStore(self.workspace).get_projects_summary()
-                print(f"[DEBUG] _get_projects_summary (global) result: {summary!r}", file=sys.stderr, flush=True)
-                return summary
-        except Exception as e:
-            print(f"[DEBUG] _get_projects_summary EXCEPTION: {e}", file=sys.stderr, flush=True)
+                return ProjectStore(self.workspace).get_projects_summary()
+        except Exception:
             return ""
 
     def build_messages(

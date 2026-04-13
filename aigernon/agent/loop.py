@@ -172,8 +172,6 @@ class AgentLoop:
 
         # Compute instance-scoped allowed_dir for filesystem tools (Fix D)
         instance_id = getattr(msg, "instance_id", None)
-        import sys
-        print(f"[DEBUG] _process_message: instance_id={instance_id!r} channel={msg.channel}", file=sys.stderr, flush=True)
         instance_allowed_dir = (
             self.workspace / "instances" / instance_id if instance_id else None
         )
