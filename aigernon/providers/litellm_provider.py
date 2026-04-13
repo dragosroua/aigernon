@@ -6,6 +6,7 @@ from typing import Any
 
 import litellm
 from litellm import acompletion
+from loguru import logger
 
 from aigernon.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from aigernon.providers.registry import find_by_model, find_gateway
@@ -158,7 +159,13 @@ class LiteLLMProvider(LLMProvider):
         """Parse LiteLLM response into our standard format."""
         choice = response.choices[0]
         message = choice.message
-        
+
+        logger.info(
+            f"LLM raw response — finish_reason={choice.finish_reason!r} "
+            f"content={message.content!r} "
+            f"tool_calls={bool(getattr(message, 'tool_calls', None))}"
+        )
+
         tool_calls = []
         if hasattr(message, "tool_calls") and message.tool_calls:
             for tc in message.tool_calls:

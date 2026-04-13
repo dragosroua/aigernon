@@ -152,13 +152,14 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
     
-    async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
+    async def _process_message(self, msg: InboundMessage, session_key: str | None = None) -> OutboundMessage | None:
         """
         Process a single inbound message.
-        
+
         Args:
             msg: The inbound message to process.
-        
+            session_key: Explicit session key override (uses msg.session_key if not provided).
+
         Returns:
             The response message, or None if no response needed.
         """
@@ -166,7 +167,7 @@ class AgentLoop:
         # The chat_id contains the original "channel:chat_id" to route back to
         if msg.channel == "system":
             return await self._process_system_message(msg)
-        
+
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
 
@@ -176,14 +177,17 @@ class AgentLoop:
             self.workspace / "instances" / instance_id if instance_id else None
         )
 
+        # Use explicit session_key if provided, otherwise derive from message
+        effective_session_key = session_key or msg.session_key
+
         # Get or create session
-        session = self.sessions.get_or_create(msg.session_key)
+        session = self.sessions.get_or_create(effective_session_key)
 
         # Set audit context for tool registry
         self.tools.set_context(
             user_id=msg.sender_id,
             channel=msg.channel,
-            session_key=msg.session_key,
+            session_key=effective_session_key,
         )
 
         # Update tool contexts
@@ -258,6 +262,10 @@ class AgentLoop:
                 break
 
         if not final_content:
+            logger.warning(
+                f"Agent loop ended with no final_content after {iteration} iteration(s). "
+                f"last response.content={final_content!r}"
+            )
             final_content = "I've completed processing but have no response to give."
 
         # Log response preview
@@ -411,5 +419,5 @@ class AgentLoop:
             instance_id=instance_id,
         )
         
-        response = await self._process_message(msg)
+        response = await self._process_message(msg, session_key=session_key)
         return response.content if response else ""
