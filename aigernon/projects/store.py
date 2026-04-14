@@ -17,7 +17,7 @@ class ProjectStore:
     Includes ideas (brainstorming), projects, tasks, and versions.
     """
 
-    REALMS = ("assess", "decide", "do")
+    REALMS = ("assess", "decide", "do", "collections")
     TASK_STATUSES = ("draft", "ready", "unscheduled", "scheduled", "in_progress", "blocked", "done")
     TASK_TYPES = ("feature", "bug")
     VERSION_STATUSES = ("planned", "active", "ready", "released")
@@ -805,9 +805,9 @@ class ProjectStore:
                 self._update_project(project_id, current_version=version)
 
         # For backward moves, just log the reason (flexible mode)
-        elif target_realm in ("assess", "decide") and current_realm in ("decide", "do"):
+        elif target_realm in ("assess", "decide") and current_realm in ("decide", "do", "collections"):
             if not reason:
-                reason = "backtracked"
+                reason = "re-assessed" if current_realm == "collections" else "backtracked"
 
         # Calculate time in current realm
         time_in_realm = self._calculate_time_in_realm(project_id)
@@ -819,6 +819,41 @@ class ProjectStore:
         self._update_project(project_id, realm=target_realm)
 
         return True, []
+
+    def complete_project(self, project_id: str) -> tuple[bool, str]:
+        """
+        Move a project from Do to Collections and return a completion summary.
+
+        Returns:
+            (success, summary_text or error_message)
+        """
+        project = self.get_project(project_id)
+        if not project:
+            return False, "Project not found"
+        if project.get("realm") != "do":
+            return False, "Project must be in the Do realm to complete"
+
+        name = project.get("name", project_id)
+        tasks = self.list_tasks(project_id)
+        done_count = sum(1 for t in tasks if t.get("status") == "done")
+        total_count = len(tasks)
+        realm_time_str = self.format_realm_time(project_id)
+        completed_at = datetime.now().strftime("%Y-%m-%d")
+
+        summary_lines = [f"## Completed: {name} [{completed_at}]"]
+        summary_lines.append(f"Timeline: {realm_time_str}")
+        summary_lines.append(f"Tasks: {done_count}/{total_count} done")
+        if project.get("current_version"):
+            summary_lines.append(f"Version: {project['current_version']}")
+        if project.get("repo"):
+            summary_lines.append(f"Repo: {project['repo']}")
+        summary = "\n".join(summary_lines)
+
+        time_in_realm = self._calculate_time_in_realm(project_id)
+        self._log_transition(project_id, "do", "collections", "completed", time_in_realm)
+        self._update_project(project_id, realm="collections", completed_at=completed_at)
+
+        return True, summary
 
     # -------------------------------------------------------------------------
     # Versions
@@ -1003,7 +1038,7 @@ class ProjectStore:
         """
         history = self.get_transition_history(project_id)
 
-        realm_times = {"assess": 0, "decide": 0, "do": 0}
+        realm_times = {"assess": 0, "decide": 0, "do": 0, "collections": 0}
 
         for record in history:
             if record.get("type") != "transition":
