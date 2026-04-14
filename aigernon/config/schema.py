@@ -136,8 +136,8 @@ class SecurityConfig(BaseModel):
 class VectorConfig(BaseModel):
     """Vector memory configuration."""
     enabled: bool = False  # Enable vector memory (requires chromadb)
-    embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
-    embedding_provider: str = "openai"  # Provider for embeddings (openai, openrouter)
+    embedding_model: str = "text-embedding-3-small"  # Used only when embedding_provider != "local"
+    embedding_provider: str = "local"  # "local" = chromadb built-in all-MiniLM-L6-v2 (free, no API); "openai"/"openrouter" = remote API
     chunk_size: int = 500  # Words per chunk
     chunk_overlap: int = 50  # Overlap between chunks in words
     similarity_threshold: float = 0.7  # Minimum similarity score for results

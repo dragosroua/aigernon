@@ -67,14 +67,19 @@ class VectorStore:
                     path=str(self.persist_directory),
                 )
             except Exception as e:
-                # If there's a database corruption/version issue, try resetting
-                if "infer type" in str(e) or "chroma_server" in str(e):
+                # Reset on known corruption/version/migration errors
+                err = str(e).lower()
+                recoverable = (
+                    "infer type" in err
+                    or "chroma_server" in err
+                    or "migration" in err
+                    or "no such table" in err
+                )
+                if recoverable:
                     import shutil
-                    # Clear corrupted database
                     if self.persist_directory.exists():
                         shutil.rmtree(self.persist_directory)
                     self.persist_directory.mkdir(parents=True, exist_ok=True)
-                    # Try again with fresh database
                     self._client = chromadb.PersistentClient(
                         path=str(self.persist_directory),
                     )
@@ -421,22 +426,34 @@ def create_vector_store(
     api_key: str | None = None,
     api_base: str | None = None,
     embedding_model: str = "text-embedding-3-small",
+    embedding_provider: str = "local",
 ) -> VectorStore:
     """
     Create a configured VectorStore instance.
 
     Args:
         data_dir: Base data directory (vectordb will be created inside)
-        api_key: API key for embeddings
-        api_base: API base URL for embeddings
-        embedding_model: Embedding model to use
+        api_key: API key for embeddings (ignored when embedding_provider="local")
+        api_base: API base URL for embeddings (ignored when embedding_provider="local")
+        embedding_model: Embedding model name (ignored when embedding_provider="local")
+        embedding_provider: "local" uses ChromaDB's built-in all-MiniLM-L6-v2 (ONNX,
+            no API calls, no cost). Any other value uses LiteLLM with the given
+            api_key/api_base/embedding_model.
 
     Returns:
         Configured VectorStore instance
     """
-    from aigernon.memory.embeddings import EmbeddingProvider
-
     persist_dir = Path(data_dir) / "vectordb"
+
+    if embedding_provider == "local":
+        # ChromaDB's built-in DefaultEmbeddingFunction runs all-MiniLM-L6-v2
+        # locally via ONNX Runtime — no external API, no cost, 384-dim vectors.
+        return VectorStore(
+            persist_directory=persist_dir,
+            embedding_provider=None,
+        )
+
+    from aigernon.memory.embeddings import EmbeddingProvider
 
     provider = EmbeddingProvider(
         model=embedding_model,
