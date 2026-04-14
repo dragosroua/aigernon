@@ -318,6 +318,10 @@ class ProjectStore:
                     tasks_dir = project_dir / "tasks"
                     config["task_count"] = len(list(tasks_dir.glob("*.yaml"))) if tasks_dir.exists() else 0
 
+                    # Backward-compat: collections projects without collection_id default to "done"
+                    if config.get("realm") == "collections" and not config.get("collection_id"):
+                        config["collection_id"] = "done"
+
                     if realm is None or config.get("realm") == realm:
                         projects.append(config)
 
@@ -332,6 +336,8 @@ class ProjectStore:
         project.update(fields)
         # Remove 'id' before saving (it's derived from directory)
         project.pop("id", None)
+        # Strip keys explicitly set to None so they're absent from the YAML
+        project = {k: v for k, v in project.items() if v is not None}
 
         config_path = self._project_dir(project_id) / "project.yaml"
         config_path.write_text(yaml.dump(project, default_flow_style=False))
@@ -845,8 +851,11 @@ class ProjectStore:
         # Log the transition
         self._log_transition(project_id, current_realm, target_realm, reason, time_in_realm)
 
-        # Update project realm
-        self._update_project(project_id, realm=target_realm)
+        # Update project realm; clear collection_id when leaving collections
+        extra: dict = {}
+        if current_realm == "collections":
+            extra["collection_id"] = None
+        self._update_project(project_id, realm=target_realm, **extra)
 
         return True, []
 
@@ -881,7 +890,50 @@ class ProjectStore:
 
         time_in_realm = self._calculate_time_in_realm(project_id)
         self._log_transition(project_id, "do", "collections", "completed", time_in_realm)
-        self._update_project(project_id, realm="collections", completed_at=completed_at)
+        self._update_project(
+            project_id,
+            realm="collections",
+            completed_at=completed_at,
+            collection_id="done",
+        )
+
+        return True, summary
+
+    def archive_project_to_collection(
+        self, project_id: str, collection_id: str
+    ) -> tuple[bool, str]:
+        """
+        Move an Assess-realm project to Collections with the given collection_id.
+
+        Returns:
+            (success, summary_text or error_message)
+        """
+        project = self.get_project(project_id)
+        if not project:
+            return False, "Project not found"
+        if project.get("realm") != "assess":
+            return False, "Only projects in the Assess realm can be archived"
+
+        name = project.get("name", project_id)
+        tasks = self.list_tasks(project_id)
+        archived_at = datetime.now().strftime("%Y-%m-%d")
+        realm_time_str = self.format_realm_time(project_id)
+
+        summary_lines = [f"## Archived: {name} [{archived_at}]"]
+        summary_lines.append(f"Time in Assess: {realm_time_str}")
+        summary_lines.append(f"Tasks defined: {len(tasks)}")
+        if project.get("repo"):
+            summary_lines.append(f"Repo: {project['repo']}")
+        summary = "\n".join(summary_lines)
+
+        time_in_realm = self._calculate_time_in_realm(project_id)
+        self._log_transition(project_id, "assess", "collections", "archived", time_in_realm)
+        self._update_project(
+            project_id,
+            realm="collections",
+            completed_at=archived_at,
+            collection_id=collection_id,
+        )
 
         return True, summary
 
