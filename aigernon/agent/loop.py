@@ -222,19 +222,24 @@ class AgentLoop:
         # Agent loop
         iteration = 0
         final_content = None
-        
+        last_intermediate_content = None  # text seen alongside tool calls (fallback)
+
         while iteration < self.max_iterations:
             iteration += 1
-            
+
             # Call LLM
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=model or self.model
             )
-            
+
             # Handle tool calls
             if response.has_tool_calls:
+                # Save any accompanying text as a potential fallback
+                if response.content:
+                    last_intermediate_content = response.content
+
                 # Add assistant message with tool calls
                 tool_call_dicts = [
                     {
@@ -251,7 +256,7 @@ class AgentLoop:
                     messages, response.content, tool_call_dicts,
                     reasoning_content=response.reasoning_content,
                 )
-                
+
                 # Execute tools — inject instance-scoped allowed_dir (Fix D)
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
@@ -268,11 +273,19 @@ class AgentLoop:
                 break
 
         if not final_content:
-            logger.warning(
-                f"Agent loop ended with no final_content after {iteration} iteration(s). "
-                f"last response.content={final_content!r}"
-            )
-            final_content = "I've completed processing but have no response to give."
+            # Use any text the model produced alongside tool calls as a fallback
+            if last_intermediate_content:
+                final_content = last_intermediate_content
+                logger.warning(
+                    f"Agent loop ended with empty final response after {iteration} iteration(s); "
+                    f"using last intermediate content as fallback."
+                )
+            else:
+                logger.warning(
+                    f"Agent loop ended with no final_content after {iteration} iteration(s). "
+                    f"last response.content={response.content!r}"
+                )
+                final_content = "I've completed processing but have no response to give."
 
         # Log response preview
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
@@ -343,14 +356,14 @@ class AgentLoop:
         # Agent loop (limited for announce handling)
         iteration = 0
         final_content = None
-        
+
         while iteration < self.max_iterations:
             iteration += 1
-            
+
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
-                model=model or self.model
+                model=self.model
             )
             
             if response.has_tool_calls:
