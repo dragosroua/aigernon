@@ -517,7 +517,7 @@ class ProjectStore:
             return False
 
         task = self.get_task(project_id, task_id)
-        if not task or task.get("status") != "draft":
+        if not task or task.get("status") not in ("draft", "unscheduled"):
             return False
 
         return self.update_task(project_id, task_id, status="ready")
