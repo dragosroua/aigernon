@@ -485,7 +485,12 @@ class ProjectStore:
 
         self._ensure_project_dir(to_project_id)
         new_task_id = self._generate_task_id(to_project_id)
-        task_data = {k: v for k, v in task.items() if k != "id"}
+        task_data = {k: v for k, v in task.items()}
+        task_data["id"] = new_task_id  # assign new id for target project
+        # Reset status to draft so task is editable in any realm
+        task_data["status"] = "draft"
+        task_data["version"] = None
+        task_data["branch"] = None
         target_path = self._task_path(to_project_id, new_task_id)
         target_path.write_text(yaml.dump(task_data, default_flow_style=False))
 
@@ -804,10 +809,17 @@ class ProjectStore:
                 # Set current version on project
                 self._update_project(project_id, current_version=version)
 
-        # For backward moves, just log the reason (flexible mode)
+        # For backward moves, reset task statuses so they're actionable
         elif target_realm in ("assess", "decide") and current_realm in ("decide", "do", "collections"):
             if not reason:
                 reason = "re-assessed" if current_realm == "collections" else "backtracked"
+            if target_realm == "assess":
+                for task in self.list_tasks(project_id):
+                    self.update_task(project_id, task["id"], status="draft", version=None, branch=None)
+            elif target_realm == "decide":
+                for task in self.list_tasks(project_id):
+                    if task.get("status") not in ("unscheduled", "scheduled"):
+                        self.update_task(project_id, task["id"], status="unscheduled")
 
         # Calculate time in current realm
         time_in_realm = self._calculate_time_in_realm(project_id)
