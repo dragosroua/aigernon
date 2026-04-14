@@ -314,8 +314,11 @@ class CronService:
         message: str | None = None,
         deliver_channels: list[str] | None = None,
         update_deliver_channels: bool = False,
+        schedule_kind: str | None = None,
+        every_minutes: int | None = None,
+        cron_expr: str | None = None,
     ) -> CronJob | None:
-        """Update name, message, and/or deliver_channels of a job."""
+        """Update name, message, deliver_channels, and/or schedule of a job."""
         store = self._load_store()
         for job in store.jobs:
             if job.id == job_id:
@@ -325,8 +328,15 @@ class CronService:
                     job.payload.message = message
                 if update_deliver_channels:
                     job.payload.deliver_channels = deliver_channels
+                if schedule_kind == "every" and every_minutes and every_minutes >= 1:
+                    job.schedule = CronSchedule(kind="every", every_ms=every_minutes * 60 * 1000)
+                    job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+                elif schedule_kind == "cron" and cron_expr:
+                    job.schedule = CronSchedule(kind="cron", expr=cron_expr)
+                    job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
                 job.updated_at_ms = _now_ms()
                 self._save_store()
+                self._arm_timer()
                 return job
         return None
 

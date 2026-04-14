@@ -549,11 +549,15 @@ class ProjectStore:
             version_path = self._version_path(project_id, version)
             version_path.write_text(yaml.dump(version_data, default_flow_style=False))
 
+        # Derive the shared version branch name (created by route handler)
+        version_branch = f"version/{version}"
+
         return self.update_task(
             project_id,
             task_id,
             status="scheduled",
             version=version,
+            branch=version_branch,
             scheduled_at=datetime.now().isoformat(),
         )
 
@@ -572,7 +576,9 @@ class ProjectStore:
         if not task or task.get("status") != "scheduled":
             return False
 
-        # Generate branch name if not provided
+        # Use the version branch already set at schedule time, then fall back to generating one
+        if not branch:
+            branch = task.get("branch")
         if not branch:
             prefix = "feat" if task.get("type") == "feature" else "bug"
             slug = safe_filename(task["title"].lower().replace(" ", "-"))
