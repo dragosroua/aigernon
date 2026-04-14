@@ -315,6 +315,8 @@ class ProjectStore:
                 if config_path.exists():
                     config = yaml.safe_load(config_path.read_text())
                     config["id"] = project_dir.name
+                    tasks_dir = project_dir / "tasks"
+                    config["task_count"] = len(list(tasks_dir.glob("*.yaml"))) if tasks_dir.exists() else 0
 
                     if realm is None or config.get("realm") == realm:
                         projects.append(config)
@@ -469,6 +471,26 @@ class ProjectStore:
             return False
 
         task_path.unlink()
+        return True
+
+    def move_task(self, from_project_id: str, task_id: str, to_project_id: str) -> bool:
+        """Move a task from one project to another."""
+        task = self.get_task(from_project_id, task_id)
+        if not task:
+            return False
+
+        to_project = self.get_project(to_project_id)
+        if not to_project:
+            return False
+
+        self._ensure_project_dir(to_project_id)
+        new_task_id = self._generate_task_id(to_project_id)
+        task_data = {k: v for k, v in task.items() if k != "id"}
+        target_path = self._task_path(to_project_id, new_task_id)
+        target_path.write_text(yaml.dump(task_data, default_flow_style=False))
+
+        source_path = self._task_path(from_project_id, task_id)
+        source_path.unlink()
         return True
 
     def mark_task_ready(self, project_id: str, task_id: str) -> bool:
