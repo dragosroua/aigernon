@@ -30,6 +30,7 @@ class AgentPool:
         exec_config=None,
         cron_service=None,
         restrict_to_workspace: bool = False,
+        db=None,
     ):
         self._provider = provider
         self._workspace = workspace
@@ -39,10 +40,22 @@ class AgentPool:
         self._exec_config = exec_config
         self._cron_service = cron_service
         self._restrict_to_workspace = restrict_to_workspace
+        self._db = db  # Database instance for per-user token resolution
 
         self._loops: dict[str, AgentLoop] = {}
         self._queues: dict[str, asyncio.Queue] = {}
         self._workers: dict[str, asyncio.Task] = {}
+
+    def _make_token_resolver(self, user_id: str):
+        """Build a per-user async callable: owner -> plaintext token | None."""
+        db = self._db
+
+        async def resolver(owner: str):
+            if db is None:
+                return None
+            return await db.get_github_token_for_owner(user_id, owner)
+
+        return resolver
 
     def _get_or_create_loop(self, user_id: str) -> AgentLoop:
         if user_id not in self._loops:
@@ -57,6 +70,7 @@ class AgentPool:
                 cron_service=self._cron_service,
                 restrict_to_workspace=self._restrict_to_workspace,
                 web_mode=True,  # web/API users: GitTool only, no ExecTool
+                token_resolver=self._make_token_resolver(user_id),
             )
         return self._loops[user_id]
 

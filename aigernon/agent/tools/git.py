@@ -1,8 +1,11 @@
 """Git tool — explicit operations via subprocess, shell=False, no arbitrary passthrough."""
 
 import asyncio
+import os
+import stat
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Awaitable, Optional
 
 from loguru import logger
 
@@ -26,10 +29,18 @@ class GitTool(Tool):
         "checkout", "add", "commit", "branch",
     })
 
-    def __init__(self, workspace: Path, allowed_dir: Path | None = None, timeout: int = 60):
+    def __init__(
+        self,
+        workspace: Path,
+        allowed_dir: Path | None = None,
+        timeout: int = 60,
+        token_resolver: Optional[Callable[[str], Awaitable[Optional[str]]]] = None,
+    ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
         self._timeout = timeout
+        # Async callable: owner_login -> plaintext token | None
+        self._token_resolver = token_resolver
 
     @property
     def name(self) -> str:
@@ -122,10 +133,29 @@ class GitTool(Tool):
             return await self._run(["git", "status"], cwd)
 
         if action == "pull":
-            return await self._run(["git", "pull"], cwd)
+            # Resolve remote URL for token injection
+            remote_url = await self._get_remote_url(cwd)
+            env, script = await self._askpass_env(remote_url or "")
+            try:
+                return await self._run(["git", "pull"], cwd, env=env or None)
+            finally:
+                if script:
+                    try:
+                        os.unlink(script)
+                    except OSError:
+                        pass
 
         if action == "push":
-            return await self._run(["git", "push"], cwd)
+            remote_url = await self._get_remote_url(cwd)
+            env, script = await self._askpass_env(remote_url or "")
+            try:
+                return await self._run(["git", "push"], cwd, env=env or None)
+            finally:
+                if script:
+                    try:
+                        os.unlink(script)
+                    except OSError:
+                        pass
 
         if action == "log":
             return await self._run(
@@ -165,6 +195,52 @@ class GitTool(Tool):
 
         return f"Error: unhandled action '{action}'"
 
+    # ── token injection ────────────────────────────────────────────────────────
+
+    async def _askpass_env(self, repo_url: str) -> tuple[dict, str | None]:
+        """Build a GIT_ASKPASS environment and return (env_dict, tmp_script_path).
+
+        Extracts the owner from the repo URL (github.com/<owner>/<repo>),
+        calls token_resolver, writes a temp executable script that prints the
+        token, and sets GIT_ASKPASS + GIT_TERMINAL_PROMPT=0.
+
+        Returns (env, script_path) — caller must delete script_path when done.
+        Returns ({}, None) if no token is available.
+        """
+        if not self._token_resolver:
+            return {}, None
+
+        # Extract owner from URL: https://github.com/<owner>/<repo>[.git]
+        try:
+            parts = repo_url.rstrip("/").split("/")
+            owner = parts[-2]  # owner is second-to-last segment
+        except (IndexError, AttributeError):
+            return {}, None
+
+        token = await self._token_resolver(owner)
+        if not token:
+            return {}, None
+
+        # Write temp script; use a secure tempfile so no other process can read it
+        fd, script_path = tempfile.mkstemp(prefix="git_askpass_", suffix=".sh")
+        try:
+            script_content = (
+                "#!/bin/sh\n"
+                f"echo '{token}'\n"
+            )
+            os.write(fd, script_content.encode())
+        finally:
+            os.close(fd)
+
+        os.chmod(script_path, stat.S_IRWXU)  # 0700 — owner-only execute
+
+        env = {
+            **os.environ,
+            "GIT_ASKPASS": script_path,
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+        return env, script_path
+
     # ── helpers ────────────────────────────────────────────────────────────────
 
     def _validate_path(self, path_str: str, allowed_dir: Path | None) -> str:
@@ -185,15 +261,41 @@ class GitTool(Tool):
         return str(base / name)
 
     async def _clone(self, repo_url: str, dest: str, allowed_dir: Path | None) -> str:
-        """Validate destination then run git clone."""
+        """Validate destination then run git clone with token injection."""
         dest_check = self._validate_path(dest, allowed_dir)
         if dest_check.startswith("Error:"):
             return dest_check
         dest_path = Path(dest_check)
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        return await self._run(["git", "clone", repo_url, str(dest_path)], str(dest_path.parent))
+        env, script = await self._askpass_env(repo_url)
+        try:
+            return await self._run(
+                ["git", "clone", repo_url, str(dest_path)],
+                str(dest_path.parent),
+                env=env or None,
+            )
+        finally:
+            if script:
+                try:
+                    os.unlink(script)
+                except OSError:
+                    pass
 
-    async def _run(self, args: list[str], cwd: str) -> str:
+    async def _get_remote_url(self, cwd: str) -> str | None:
+        """Get the origin remote URL for a repo."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "git", "remote", "get-url", "origin",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                cwd=cwd,
+            )
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
+            return stdout.decode().strip() if stdout else None
+        except Exception:
+            return None
+
+    async def _run(self, args: list[str], cwd: str, env: dict | None = None) -> str:
         """Run a git command with shell=False and return combined output."""
         logger.debug(f"GitTool: {' '.join(args)} (cwd={cwd})")
         try:
@@ -202,6 +304,7 @@ class GitTool(Tool):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
+                env=env,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
