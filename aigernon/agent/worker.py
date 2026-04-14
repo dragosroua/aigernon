@@ -16,7 +16,7 @@ async def run_agent_job(
     trigger: str,
     prompt_override: Optional[str],
     user: dict,
-    agent_loop,
+    agent_pool,
     workspace_manager: WorkspaceManager,
     db,
     ws_manager=None,
@@ -103,7 +103,8 @@ async def run_agent_job(
             )
 
         # 4. Run agent
-        response = await agent_loop.process_direct(
+        response = await agent_pool.process_direct(
+            user_id=user["id"],
             content=prompt,
             session_key=f"agent_job:{job_id}",
             channel="agent_job",
