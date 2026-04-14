@@ -823,17 +823,18 @@ class ProjectStore:
                 # Set current version on project
                 self._update_project(project_id, current_version=version)
 
-        # For backward moves, reset task statuses so they're actionable
+        # For backward moves, reset task statuses so they're actionable again
         elif target_realm in ("assess", "decide") and current_realm in ("decide", "do", "collections"):
             if not reason:
                 reason = "re-assessed" if current_realm == "collections" else "backtracked"
             if target_realm == "assess":
+                # Full reset — tasks go back to editable draft state
                 for task in self.list_tasks(project_id):
                     self.update_task(project_id, task["id"], status="draft", version=None, branch=None)
             elif target_realm == "decide":
+                # Reset all tasks to unscheduled so they can be re-assigned to a version
                 for task in self.list_tasks(project_id):
-                    if task.get("status") not in ("unscheduled", "scheduled"):
-                        self.update_task(project_id, task["id"], status="unscheduled")
+                    self.update_task(project_id, task["id"], status="unscheduled", version=None, branch=None)
 
         # Calculate time in current realm
         time_in_realm = self._calculate_time_in_realm(project_id)
