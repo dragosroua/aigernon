@@ -400,7 +400,10 @@ class ProjectStore:
         if not task_path.exists():
             return None
 
-        return yaml.safe_load(task_path.read_text())
+        task = yaml.safe_load(task_path.read_text())
+        if task and "id" not in task:
+            task["id"] = task_id
+        return task
 
     def list_tasks(
         self,
@@ -427,6 +430,11 @@ class ProjectStore:
 
         for task_file in sorted(tasks_dir.glob("*.yaml")):
             task = yaml.safe_load(task_file.read_text())
+            if not task:
+                continue
+            # Ensure id is always present (guard against agent-written files)
+            if "id" not in task:
+                task["id"] = task_file.stem
 
             if status and task.get("status") != status:
                 continue
