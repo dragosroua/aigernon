@@ -247,6 +247,12 @@ class VectorStore:
         """
         col = self._get_collection(collection)
 
+        # ChromaDB raises if n_results > number of documents in the collection
+        doc_count = col.count()
+        if doc_count == 0:
+            return []
+        n_results = min(n_results, doc_count)
+
         kwargs: dict[str, Any] = {
             "query_texts": [query],
             "n_results": n_results,
