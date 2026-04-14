@@ -96,6 +96,7 @@ class AgentPool:
         channel: str = "cli",
         chat_id: str = "direct",
         instance_id: str | None = None,
+        model: str | None = None,
     ) -> str:
         """
         Enqueue a message for the given user and await the result.
@@ -109,6 +110,7 @@ class AgentPool:
             "channel": channel,
             "chat_id": chat_id,
             "instance_id": instance_id,
+            "model": model,
         }
         await self._queues[user_id].put((content, kwargs, future))
         return await future

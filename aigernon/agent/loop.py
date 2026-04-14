@@ -155,7 +155,7 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
     
-    async def _process_message(self, msg: InboundMessage, session_key: str | None = None) -> OutboundMessage | None:
+    async def _process_message(self, msg: InboundMessage, session_key: str | None = None, model: str | None = None) -> OutboundMessage | None:
         """
         Process a single inbound message.
 
@@ -227,7 +227,7 @@ class AgentLoop:
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
-                model=self.model
+                model=model or self.model
             )
             
             # Handle tool calls
@@ -347,7 +347,7 @@ class AgentLoop:
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
-                model=self.model
+                model=model or self.model
             )
             
             if response.has_tool_calls:
@@ -401,6 +401,7 @@ class AgentLoop:
         channel: str = "cli",
         chat_id: str = "direct",
         instance_id: str | None = None,
+        model: str | None = None,
     ) -> str:
         """
         Process a message directly (for CLI or cron usage).
@@ -422,5 +423,5 @@ class AgentLoop:
             instance_id=instance_id,
         )
         
-        response = await self._process_message(msg, session_key=session_key)
+        response = await self._process_message(msg, session_key=session_key, model=model)
         return response.content if response else ""
