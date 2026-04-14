@@ -67,12 +67,32 @@ def truncate_string(s: str, max_len: int = 100, suffix: str = "...") -> str:
 
 
 def safe_filename(name: str) -> str:
-    """Convert a string to a safe filename."""
-    # Replace unsafe characters
-    unsafe = '<>:"/\\|?*'
-    for char in unsafe:
+    """Convert a string to a safe filename, preventing path traversal.
+
+    Guarantees:
+    - No directory separators (prevents path traversal)
+    - No null bytes
+    - No leading dots (prevents hidden-file creation and catches "..")
+    - No trailing whitespace/dots
+    - Maximum 100 characters
+    - Returns "unnamed" for empty/invalid input
+    """
+    if not name:
+        return "unnamed"
+    # Strip null bytes first (can confuse some filesystem APIs)
+    name = name.replace("\x00", "")
+    # Resolve to bare filename component — strips any leading "../../" etc.
+    name = Path(name).name
+    # Replace characters that are unsafe on Windows/Linux/macOS filesystems
+    for char in '<>:"/\\|?*':
         name = name.replace(char, "_")
-    return name.strip()
+    # Remove leading dots: prevents hidden files and eliminates lone "." / ".."
+    name = name.lstrip(".")
+    # Strip surrounding whitespace and trailing dots (Windows fs compat)
+    name = name.strip().rstrip(".")
+    # Enforce a sane maximum length
+    name = name[:100]
+    return name or "unnamed"
 
 
 def parse_session_key(key: str) -> tuple[str, str]:
