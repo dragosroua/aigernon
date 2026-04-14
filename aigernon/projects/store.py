@@ -429,7 +429,10 @@ class ProjectStore:
             return tasks
 
         for task_file in sorted(tasks_dir.glob("*.yaml")):
-            task = yaml.safe_load(task_file.read_text())
+            try:
+                task = yaml.safe_load(task_file.read_text())
+            except Exception:
+                continue
             if not task:
                 continue
             # Ensure id is always present (guard against agent-written files)
