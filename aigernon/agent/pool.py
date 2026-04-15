@@ -60,6 +60,21 @@ class AgentPool:
 
         return resolver
 
+    def _make_progress_callback(self, user_id: str):
+        """Build a callback that sends tool-progress updates via WebSocket typing event."""
+        async def on_tool_progress(origin_chat_id: str, tool_name: str, description: str) -> None:
+            ws = self._ws_manager
+            if ws:
+                try:
+                    await ws.connections.send_to_user(origin_chat_id, {
+                        "type": "typing",
+                        "is_typing": True,
+                        "description": description,
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to send tool progress for {origin_chat_id}: {e}")
+        return on_tool_progress
+
     def _make_start_callback(self, user_id: str):
         """Build a callback that shows the typing indicator while a subagent is running."""
         async def on_subagent_start(
@@ -144,6 +159,7 @@ class AgentPool:
                 token_resolver=self._make_token_resolver(user_id),
                 result_callback=self._make_result_callback(user_id),
                 start_callback=self._make_start_callback(user_id),
+                progress_callback=self._make_progress_callback(user_id),
             )
         return self._loops[user_id]
 

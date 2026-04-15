@@ -2,9 +2,48 @@
 
 import asyncio
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
+
+_MINIMAX_XML_RE = re.compile(r"<minimax:tool_call>.*?</minimax:tool_call>", re.DOTALL)
+
+
+def _strip_minimax_xml(text: str) -> str:
+    return _MINIMAX_XML_RE.sub("", text).strip()
+
+
+def _tool_description(tool_name: str, args: dict) -> str:
+    if tool_name == "read_file":
+        p = str(args.get("path", ""))
+        return f"Reading {Path(p).name or p}\u2026"
+    if tool_name == "write_file":
+        p = str(args.get("path", ""))
+        return f"Writing {Path(p).name or p}\u2026"
+    if tool_name == "edit_file":
+        p = str(args.get("path", ""))
+        return f"Editing {Path(p).name or p}\u2026"
+    if tool_name == "list_dir":
+        p = str(args.get("path", ""))
+        return f"Listing {Path(p).name or 'directory'}\u2026"
+    if tool_name in ("bash", "exec"):
+        cmd = str(args.get("command", ""))[:50]
+        return f"Running: {cmd}\u2026"
+    if tool_name == "git":
+        action = str(args.get("action", ""))
+        return f"Git: {action}\u2026"
+    if tool_name == "web_search":
+        q = str(args.get("query", ""))[:50]
+        return f"Searching: {q}\u2026"
+    if tool_name == "web_fetch":
+        return "Fetching page\u2026"
+    if tool_name == "spawn":
+        label = str(args.get("label", args.get("task", "")))[:40]
+        return f"Spawning: {label}\u2026"
+    if tool_name == "cron":
+        return "Setting reminder\u2026"
+    return f"Using {tool_name}\u2026"
 
 from loguru import logger
 
@@ -40,6 +79,7 @@ class SubagentManager:
         result_callback=None,
         start_callback=None,
         token_resolver=None,
+        progress_callback=None,
     ):
         from aigernon.config.schema import ExecToolConfig
         self.provider = provider
@@ -50,9 +90,10 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.web_mode = web_mode
-        self._result_callback = result_callback  # async (channel, chat_id, label, result, status) -> None
-        self._start_callback = start_callback    # async (channel, chat_id, label) -> None
-        self._token_resolver = token_resolver    # async (owner: str) -> token | None
+        self._result_callback = result_callback    # async (channel, chat_id, label, result, status) -> None
+        self._start_callback = start_callback      # async (channel, chat_id, label) -> None
+        self._token_resolver = token_resolver      # async (owner: str) -> token | None
+        self._progress_callback = progress_callback  # async (chat_id, tool_name, description) -> None
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -180,6 +221,12 @@ class SubagentManager:
                     for tool_call in response.tool_calls:
                         args_str = json.dumps(tool_call.arguments)
                         logger.debug(f"Subagent [{task_id}] executing: {tool_call.name} with arguments: {args_str}")
+                        if self._progress_callback:
+                            try:
+                                desc = _tool_description(tool_call.name, tool_call.arguments)
+                                await self._progress_callback(origin["chat_id"], tool_call.name, desc)
+                            except Exception:
+                                pass
                         result = await tools.execute(tool_call.name, tool_call.arguments)
                         messages.append({
                             "role": "tool",
@@ -202,6 +249,9 @@ class SubagentManager:
                     logger.error(f"Subagent [{task_id}] retry failed: {_re}")
                 if not final_result:
                     final_result = "Investigation complete but the model produced no summary."
+
+            # Strip any leaked MiniMax XML from the result
+            final_result = _strip_minimax_xml(final_result)
 
             logger.info(f"Subagent [{task_id}] completed successfully")
             await self._announce_result(task_id, label, task, final_result, origin, "ok")

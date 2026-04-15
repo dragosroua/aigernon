@@ -2,8 +2,49 @@
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
+
+_MINIMAX_XML_RE = re.compile(r"<minimax:tool_call>.*?</minimax:tool_call>", re.DOTALL)
+
+
+def _strip_minimax_xml(text: str) -> str:
+    """Strip any leaked MiniMax XML tool call blocks from a string."""
+    return _MINIMAX_XML_RE.sub("", text).strip()
+
+
+def _tool_description(tool_name: str, args: dict) -> str:
+    """Return a short human-readable description of a tool call."""
+    if tool_name == "read_file":
+        p = str(args.get("path", ""))
+        return f"Reading {Path(p).name or p}\u2026"
+    if tool_name == "write_file":
+        p = str(args.get("path", ""))
+        return f"Writing {Path(p).name or p}\u2026"
+    if tool_name == "edit_file":
+        p = str(args.get("path", ""))
+        return f"Editing {Path(p).name or p}\u2026"
+    if tool_name == "list_dir":
+        p = str(args.get("path", ""))
+        return f"Listing {Path(p).name or 'directory'}\u2026"
+    if tool_name in ("bash", "exec"):
+        cmd = str(args.get("command", ""))[:50]
+        return f"Running: {cmd}\u2026"
+    if tool_name == "git":
+        action = str(args.get("action", ""))
+        return f"Git: {action}\u2026"
+    if tool_name == "web_search":
+        q = str(args.get("query", ""))[:50]
+        return f"Searching: {q}\u2026"
+    if tool_name == "web_fetch":
+        return "Fetching page\u2026"
+    if tool_name == "spawn":
+        label = str(args.get("label", args.get("task", "")))[:40]
+        return f"Spawning: {label}\u2026"
+    if tool_name == "cron":
+        return "Setting reminder\u2026"
+    return f"Using {tool_name}\u2026"
 
 from loguru import logger
 
@@ -51,6 +92,7 @@ class AgentLoop:
         token_resolver=None,
         result_callback=None,
         start_callback=None,
+        progress_callback=None,
     ):
         from aigernon.config.schema import ExecToolConfig
         from aigernon.cron.service import CronService
@@ -65,6 +107,7 @@ class AgentLoop:
         self.restrict_to_workspace = restrict_to_workspace
         self.web_mode = web_mode
         self.token_resolver = token_resolver  # async (owner: str) -> token | None
+        self.progress_callback = progress_callback  # async (chat_id, tool_name, description) -> None
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -81,6 +124,7 @@ class AgentLoop:
             result_callback=result_callback,
             start_callback=start_callback,
             token_resolver=token_resolver,
+            progress_callback=progress_callback,
         )
         
         self._running = False
@@ -266,6 +310,12 @@ class AgentLoop:
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
+                    if self.progress_callback and msg.channel == "web":
+                        try:
+                            desc = _tool_description(tool_call.name, tool_call.arguments)
+                            await self.progress_callback(msg.chat_id, tool_call.name, desc)
+                        except Exception:
+                            pass
                     result = await self.tools.execute(
                         tool_call.name, tool_call.arguments, allowed_dir=instance_allowed_dir
                     )
@@ -310,6 +360,9 @@ class AgentLoop:
                 if not final_content:
                     logger.error("Retry also produced empty content — giving up.")
                     final_content = "Sorry, I ran into an issue generating a response. Please try again."
+
+        # Strip any MiniMax XML that leaked into the final response
+        final_content = _strip_minimax_xml(final_content)
 
         # Log response preview
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
