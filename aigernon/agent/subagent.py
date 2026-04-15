@@ -39,6 +39,7 @@ class SubagentManager:
         web_mode: bool = False,
         result_callback=None,
         start_callback=None,
+        token_resolver=None,
     ):
         from aigernon.config.schema import ExecToolConfig
         self.provider = provider
@@ -50,7 +51,8 @@ class SubagentManager:
         self.restrict_to_workspace = restrict_to_workspace
         self.web_mode = web_mode
         self._result_callback = result_callback  # async (channel, chat_id, label, result, status) -> None
-        self._start_callback = start_callback   # async (channel, chat_id, label) -> None
+        self._start_callback = start_callback    # async (channel, chat_id, label) -> None
+        self._token_resolver = token_resolver    # async (owner: str) -> token | None
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -121,7 +123,7 @@ class SubagentManager:
             tools.register(ListDirTool(allowed_dir=allowed_dir))
             if self.web_mode:
                 # Web/API mode: GitTool only — no arbitrary shell execution
-                tools.register(GitTool(workspace=self.workspace))
+                tools.register(GitTool(workspace=self.workspace, token_resolver=self._token_resolver))
             else:
                 tools.register(ExecTool(
                     working_dir=str(self.workspace),

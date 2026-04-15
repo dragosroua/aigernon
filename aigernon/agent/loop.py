@@ -80,6 +80,7 @@ class AgentLoop:
             web_mode=web_mode,
             result_callback=result_callback,
             start_callback=start_callback,
+            token_resolver=token_resolver,
         )
         
         self._running = False
