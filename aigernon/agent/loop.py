@@ -50,6 +50,7 @@ class AgentLoop:
         web_mode: bool = False,
         token_resolver=None,
         result_callback=None,
+        start_callback=None,
     ):
         from aigernon.config.schema import ExecToolConfig
         from aigernon.cron.service import CronService
@@ -78,6 +79,7 @@ class AgentLoop:
             restrict_to_workspace=restrict_to_workspace,
             web_mode=web_mode,
             result_callback=result_callback,
+            start_callback=start_callback,
         )
         
         self._running = False

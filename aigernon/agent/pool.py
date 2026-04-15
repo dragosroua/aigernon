@@ -60,6 +60,25 @@ class AgentPool:
 
         return resolver
 
+    def _make_start_callback(self, user_id: str):
+        """Build a callback that shows the typing indicator while a subagent is running."""
+        async def on_subagent_start(
+            origin_channel: str,
+            origin_chat_id: str,
+            label: str,
+        ) -> None:
+            ws = self._ws_manager
+            if ws:
+                try:
+                    await ws.connections.send_to_user(origin_chat_id, {
+                        "type": "typing",
+                        "is_typing": True,
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to send subagent typing indicator for {origin_chat_id}: {e}")
+
+        return on_subagent_start
+
     def _make_result_callback(self, user_id: str):
         """Build a callback that delivers subagent results to the user's WebSocket."""
         async def on_subagent_result(
@@ -74,6 +93,10 @@ class AgentPool:
             ws = self._ws_manager
             if ws:
                 try:
+                    await ws.connections.send_to_user(origin_chat_id, {
+                        "type": "typing",
+                        "is_typing": False,
+                    })
                     await ws.connections.send_to_user(origin_chat_id, {
                         "type": "chat_message",
                         "content": content,
@@ -103,6 +126,7 @@ class AgentPool:
                 web_mode=True,  # web/API users: GitTool only, no ExecTool
                 token_resolver=self._make_token_resolver(user_id),
                 result_callback=self._make_result_callback(user_id),
+                start_callback=self._make_start_callback(user_id),
             )
         return self._loops[user_id]
 

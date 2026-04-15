@@ -38,6 +38,7 @@ class SubagentManager:
         restrict_to_workspace: bool = False,
         web_mode: bool = False,
         result_callback=None,
+        start_callback=None,
     ):
         from aigernon.config.schema import ExecToolConfig
         self.provider = provider
@@ -49,6 +50,7 @@ class SubagentManager:
         self.restrict_to_workspace = restrict_to_workspace
         self.web_mode = web_mode
         self._result_callback = result_callback  # async (channel, chat_id, label, result, status) -> None
+        self._start_callback = start_callback   # async (channel, chat_id, label) -> None
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -99,7 +101,17 @@ class SubagentManager:
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info(f"Subagent [{task_id}] starting task: {label}")
-        
+
+        if self._start_callback:
+            try:
+                await self._start_callback(
+                    origin_channel=origin["channel"],
+                    origin_chat_id=origin["chat_id"],
+                    label=label,
+                )
+            except Exception as _e:
+                logger.warning(f"Subagent start callback failed: {_e}")
+
         try:
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
@@ -175,9 +187,18 @@ class SubagentManager:
                     final_result = response.content
                     break
             
-            if final_result is None:
-                final_result = "Task completed but no final response was generated."
-            
+            if not final_result:
+                # Model used tools but produced no final text — retry without tools
+                logger.warning(f"Subagent [{task_id}] empty result after {iteration} iteration(s); retrying without tools.")
+                try:
+                    messages.append({"role": "user", "content": "[Please summarize your findings now.]"})
+                    retry = await self.provider.chat(messages=messages, tools=[], model=self.model)
+                    final_result = retry.content or ""
+                except Exception as _re:
+                    logger.error(f"Subagent [{task_id}] retry failed: {_re}")
+                if not final_result:
+                    final_result = "Investigation complete but the model produced no summary."
+
             logger.info(f"Subagent [{task_id}] completed successfully")
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
             
