@@ -225,7 +225,12 @@ You have access to:
 - Read, write, and edit files
 - Search the web and fetch web pages
 - Spawn subagents for complex background tasks
-{"- Execute shell commands" if not instance_id else ""}
+- `git` tool: clone, pull, push, status, log, diff, checkout, add, commit, branch
+{"- Execute shell commands (bash)" if not instance_id else ""}
+
+### Git / GitHub Operations
+Always use the `git` tool for all repository operations. Never use bash, the `gh` CLI, curl, or any other approach.
+The `git` tool handles authentication automatically via your linked GitHub account — just pass the HTTPS URL.
 
 IMPORTANT: Always reply directly with text. Never use a tool just to send a response back to the user — just write the response directly.
 

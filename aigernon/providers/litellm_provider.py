@@ -155,6 +155,44 @@ class LiteLLMProvider(LLMProvider):
                 finish_reason="error",
             )
     
+    def _parse_minimax_tool_calls(self, content: str) -> tuple[list[ToolCallRequest], str]:
+        """Extract MiniMax XML-style tool calls from content.
+
+        MiniMax outputs tool calls as:
+            <minimax:tool_call>
+            <invoke name="tool_name">
+            <parameter name="key">value</parameter>
+            </invoke>
+            </minimax:tool_call>
+
+        Returns (tool_calls, cleaned_content) with the XML blocks stripped.
+        """
+        import re
+        import uuid
+
+        tool_calls: list[ToolCallRequest] = []
+        block_re = re.compile(
+            r"<minimax:tool_call>\s*<invoke name=\"([^\"]+)\">(.*?)</invoke>\s*</minimax:tool_call>",
+            re.DOTALL,
+        )
+        param_re = re.compile(r'<parameter name="([^"]+)">(.*?)</parameter>', re.DOTALL)
+
+        def _replace(m: re.Match) -> str:
+            tool_name = m.group(1)
+            params_block = m.group(2)
+            arguments: dict[str, Any] = {}
+            for pm in param_re.finditer(params_block):
+                arguments[pm.group(1)] = pm.group(2).strip()
+            tool_calls.append(ToolCallRequest(
+                id=f"minimax_{uuid.uuid4().hex[:8]}",
+                name=tool_name,
+                arguments=arguments,
+            ))
+            return ""
+
+        cleaned = block_re.sub(_replace, content).strip()
+        return tool_calls, cleaned
+
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
         choice = response.choices[0]
@@ -176,12 +214,20 @@ class LiteLLMProvider(LLMProvider):
                         args = json.loads(args)
                     except json.JSONDecodeError:
                         args = {"raw": args}
-                
+
                 tool_calls.append(ToolCallRequest(
                     id=tc.id,
                     name=tc.function.name,
                     arguments=args,
                 ))
+
+        # Fallback: parse MiniMax XML tool calls embedded in content
+        content = message.content or ""
+        if not tool_calls and content and "<minimax:tool_call>" in content:
+            parsed, content = self._parse_minimax_tool_calls(content)
+            if parsed:
+                tool_calls = parsed
+                logger.info(f"Parsed {len(tool_calls)} MiniMax XML tool call(s) from content")
         
         usage = {}
         if hasattr(response, "usage") and response.usage:
@@ -194,7 +240,7 @@ class LiteLLMProvider(LLMProvider):
         reasoning_content = getattr(message, "reasoning_content", None)
         
         return LLMResponse(
-            content=message.content,
+            content=content or None,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason or "stop",
             usage=usage,
