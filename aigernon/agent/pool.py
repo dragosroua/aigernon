@@ -87,9 +87,23 @@ class AgentPool:
             label: str,
             result: str,
             status: str,
+            session_key: str | None = None,
         ) -> None:
             status_text = "completed" if status == "ok" else "encountered an error"
             content = f"**{label}** {status_text}:\n\n{result}"
+            timestamp = datetime.utcnow().isoformat()
+
+            # Persist to session history so it survives navigation
+            if session_key:
+                try:
+                    loop = self._loops.get(user_id)
+                    if loop:
+                        session = loop.sessions.get_or_create(session_key)
+                        session.add_message("assistant", content)
+                        loop.sessions.save(session)
+                except Exception as e:
+                    logger.warning(f"Failed to persist subagent result to session {session_key}: {e}")
+
             ws = self._ws_manager
             if ws:
                 try:
@@ -101,7 +115,7 @@ class AgentPool:
                         "type": "chat_message",
                         "content": content,
                         "is_complete": True,
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": timestamp,
                     })
                     logger.info(f"Delivered subagent result for '{label}' to user {origin_chat_id}")
                 except Exception as e:

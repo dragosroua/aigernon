@@ -61,6 +61,7 @@ class SubagentManager:
         label: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
+        origin_session_key: str | None = None,
     ) -> str:
         """
         Spawn a subagent to execute a task in the background.
@@ -80,6 +81,7 @@ class SubagentManager:
         origin = {
             "channel": origin_channel,
             "chat_id": origin_chat_id,
+            "session_key": origin_session_key,
         }
         
         # Create background task
@@ -228,6 +230,7 @@ class SubagentManager:
                     label=label,
                     result=result,
                     status=status,
+                    session_key=origin.get("session_key"),
                 )
                 logger.debug(f"Subagent [{task_id}] delivered result via callback to {origin['channel']}:{origin['chat_id']}")
             except Exception as e:

@@ -208,12 +208,12 @@ class AgentLoop:
         
         spawn_tool = self.tools.get("spawn")
         if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(msg.channel, msg.chat_id)
-        
+            spawn_tool.set_context(msg.channel, msg.chat_id, session_key=effective_session_key)
+
         cron_tool = self.tools.get("cron")
         if isinstance(cron_tool, CronTool):
             cron_tool.set_context(msg.channel, msg.chat_id)
-        
+
         # Build initial messages (use get_history for LLM-formatted messages)
         messages = self.context.build_messages(
             history=session.get_history(),
@@ -363,8 +363,8 @@ class AgentLoop:
         
         spawn_tool = self.tools.get("spawn")
         if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(origin_channel, origin_chat_id)
-        
+            spawn_tool.set_context(origin_channel, origin_chat_id, session_key=session_key)
+
         cron_tool = self.tools.get("cron")
         if isinstance(cron_tool, CronTool):
             cron_tool.set_context(origin_channel, origin_chat_id)
