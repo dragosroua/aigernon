@@ -67,6 +67,9 @@ class AgentPool:
             origin_chat_id: str,
             label: str,
         ) -> None:
+            # Brief delay so chat.py's finally block (typing: false) fires first,
+            # then we re-enable typing dots for the duration of the subagent.
+            await asyncio.sleep(0.4)
             ws = self._ws_manager
             if ws:
                 try:
