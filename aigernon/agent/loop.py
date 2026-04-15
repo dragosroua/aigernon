@@ -283,11 +283,30 @@ class AgentLoop:
                     f"using last intermediate content as fallback."
                 )
             else:
+                # The model gathered context via tools but produced no text.
+                # Retry once with no tools so it is forced to write a response.
                 logger.warning(
-                    f"Agent loop ended with no final_content after {iteration} iteration(s). "
-                    f"last response.content={response.content!r}"
+                    f"Agent loop ended with no content after {iteration} iteration(s); "
+                    f"retrying without tools to force a text response."
                 )
-                final_content = "I've completed processing but have no response to give."
+                try:
+                    messages.append({
+                        "role": "user",
+                        "content": "[Please provide your response now.]",
+                    })
+                    retry = await self.provider.chat(
+                        messages=messages,
+                        tools=[],  # no tools — must produce text
+                        model=model or self.model,
+                    )
+                    final_content = retry.content or ""
+                except Exception as _retry_exc:
+                    logger.error(f"Retry after empty response failed: {_retry_exc}")
+                    final_content = ""
+
+                if not final_content:
+                    logger.error("Retry also produced empty content — giving up.")
+                    final_content = "Sorry, I ran into an issue generating a response. Please try again."
 
         # Log response preview
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
