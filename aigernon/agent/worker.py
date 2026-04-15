@@ -55,10 +55,6 @@ async def run_agent_job(
                 github_token = await db.get_github_token_for_owner(user["id"], owner)
         except Exception:
             pass
-        # Fallback to legacy PAT on the user row
-        if not github_token:
-            github_token = user.get("github_token")
-
         # 1. Clone / pull workspace
         project_name = project.get("name", project["id"])
         workspace = await workspace_manager.clone_or_pull(
