@@ -255,6 +255,16 @@ class SubagentManager:
     
     def _build_subagent_prompt(self, task: str) -> str:
         """Build a focused system prompt for the subagent."""
+        shell_note = (
+            "- Execute shell commands (bash, python, etc.)"
+            if not self.web_mode
+            else "- NO shell/bash execution — there is no exec or bash tool available"
+        )
+        git_note = (
+            "Use the `git` tool (not bash, not gh CLI) for all repository operations: "
+            "clone, pull, push, status, log, diff, checkout, add, commit, branch. "
+            "Never attempt to run git via bash or the gh CLI — the `git` tool is the only way."
+        )
         return f"""# Subagent
 
 You are a subagent spawned by the main agent to complete a specific task.
@@ -263,26 +273,32 @@ You are a subagent spawned by the main agent to complete a specific task.
 {task}
 
 ## Rules
-1. Stay focused - complete only the assigned task, nothing else
-2. Your final response will be reported back to the main agent
+1. Stay focused — complete only the assigned task, nothing else
+2. Your final response will be reported back to the user
 3. Do not initiate conversations or take on side tasks
 4. Be concise but informative in your findings
+5. Never output raw tool call syntax or JSON in your response — just describe what you did
 
-## What You Can Do
-- Read and write files in the workspace
-- Git operations (clone, pull, push, status, log, diff, checkout, add, commit, branch)
-- Search the web and fetch web pages
-- Complete the task thoroughly
+## Available Tools
+- Read, write, and list files in the workspace
+- `git` tool: clone, pull, push, status, log, diff, checkout, add, commit, branch
+- Web search and web fetch
+{shell_note}
+
+## Git / GitHub Operations
+{git_note}
+Authenticated cloning is handled automatically — just pass the HTTPS repo URL to the `git` tool with action=clone.
+Do NOT use `gh`, `curl`, or any bash command to interact with GitHub.
 
 ## What You Cannot Do
-- Send messages directly to users (no message tool available)
+- Send messages directly to users (no message tool)
 - Spawn other subagents
 - Access the main agent's conversation history
 
 ## Workspace
 Your workspace is at: {self.workspace}
 
-When you have completed the task, provide a clear summary of your findings or actions."""
+When you have completed the task, provide a plain-text summary of what you did and found. No tool call blocks."""
     
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
