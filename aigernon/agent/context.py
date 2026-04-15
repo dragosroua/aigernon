@@ -6,6 +6,8 @@ import platform
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from aigernon.agent.memory import MemoryStore
 from aigernon.agent.skills import SkillsLoader
 
@@ -13,19 +15,74 @@ from aigernon.agent.skills import SkillsLoader
 class ContextBuilder:
     """
     Builds the context (system prompt + messages) for the agent.
-    
+
     Assembles bootstrap files, memory, skills, and conversation history
     into a coherent prompt for the LLM.
     """
-    
+
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md", "PROJECTS.md"]
-    
+
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self._vector_store = None
+        self._vector_enabled: bool | None = None   # None = not yet checked
+        self._similarity_threshold: float = 0.7
+        self._max_results: int = 5
     
-    def build_system_prompt(self, skill_names: list[str] | None = None, instance_id: str | None = None) -> str:
+    def _get_vector_store(self):
+        """Lazy-initialize VectorStore. Returns None if disabled or unavailable."""
+        if self._vector_enabled is None:
+            try:
+                from aigernon.config.loader import load_config, get_data_dir
+                from aigernon.memory.vector import create_vector_store
+                config = load_config()
+                if not config.vector.enabled:
+                    self._vector_enabled = False
+                    return None
+                self._similarity_threshold = config.vector.similarity_threshold
+                self._max_results = min(config.vector.max_results, 5)  # cap at 5 for prompt size
+                data_dir = get_data_dir()
+                self._vector_store = create_vector_store(
+                    data_dir=data_dir,
+                    api_key=config.get_api_key(),
+                    api_base=config.get_api_base(),
+                    embedding_model=config.vector.embedding_model,
+                    embedding_provider=config.vector.embedding_provider,
+                )
+                self._vector_enabled = True
+                logger.debug("ContextBuilder: vector memory initialized")
+            except ImportError:
+                self._vector_enabled = False
+                logger.debug("ContextBuilder: chromadb not installed — vector memory disabled")
+            except Exception as e:
+                self._vector_enabled = False
+                logger.warning(f"ContextBuilder: vector memory init failed: {e}")
+        return self._vector_store if self._vector_enabled else None
+
+    def _search_vector_memory(self, query: str) -> str:
+        """Run semantic search and return a formatted string for the system prompt."""
+        store = self._get_vector_store()
+        if not store:
+            return ""
+        try:
+            results = store.search("memories", query, n_results=self._max_results)
+            # Filter below similarity threshold
+            results = [r for r in results if r.score >= self._similarity_threshold]
+            if not results:
+                return ""
+            lines = []
+            for r in results:
+                source = r.metadata.get("source") or r.metadata.get("title") or ""
+                source_note = f" *(from {source})*" if source else ""
+                lines.append(f"{r.text.strip()}{source_note}")
+            return "\n\n---\n\n".join(lines)
+        except Exception as e:
+            logger.debug(f"Vector memory search failed (non-fatal): {e}")
+            return ""
+
+    def build_system_prompt(self, skill_names: list[str] | None = None, instance_id: str | None = None, current_message: str | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
 
@@ -54,6 +111,16 @@ class ContextBuilder:
         memory = memory_store.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
+
+        # Semantic memory — vector search on current message (if enabled)
+        if current_message:
+            vector_results = self._search_vector_memory(current_message)
+            if vector_results:
+                parts.append(
+                    f"# Semantically Relevant Memory\n\n"
+                    f"The following memories are semantically related to the current message:\n\n"
+                    f"{vector_results}"
+                )
 
         # Projects summary
         projects_summary = self._get_projects_summary(instance_id=instance_id)
@@ -238,8 +305,8 @@ Be warm, helpful, and present. You're a companion, not a task bot."""
         """
         messages = []
 
-        # System prompt
-        system_prompt = self.build_system_prompt(skill_names, instance_id=instance_id)
+        # System prompt — pass current_message so vector memory can search it
+        system_prompt = self.build_system_prompt(skill_names, instance_id=instance_id, current_message=current_message)
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})

@@ -1,5 +1,6 @@
 """File system tools: read, write, edit."""
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -13,25 +14,29 @@ def _is_memory_file(path: str) -> bool:
 
 
 def _index_memory_to_chroma(path: str, content: str) -> None:
-    """Best-effort: index memory file content into ChromaDB."""
+    """Best-effort: index memory file content into ChromaDB. Runs in executor — must be synchronous."""
     try:
         from aigernon.config.loader import load_config, get_data_dir
         from aigernon.memory.vector import create_vector_store
         config = load_config()
+        if not config.vector.enabled:
+            return
         data_dir = get_data_dir()
         vs = create_vector_store(
             data_dir=data_dir,
             api_key=config.get_api_key(),
             api_base=config.get_api_base(),
             embedding_model=config.vector.embedding_model,
+            embedding_provider=config.vector.embedding_provider,
         )
         p = path.replace("\\", "/")
         collection = "global_memories" if "/global/" in p else "memories"
         filename = Path(path).name
-        vs.add(
+        vs.upsert(
             collection=collection,
             documents=[content],
             metadatas=[{"source": path, "title": filename, "type": "memory_file"}],
+            ids=[f"mem_{Path(path).stem}"],
         )
     except Exception:
         pass
@@ -126,7 +131,8 @@ class WriteFileTool(Tool):
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             if _is_memory_file(path):
-                _index_memory_to_chroma(path, content)
+                loop = asyncio.get_event_loop()
+                loop.run_in_executor(None, _index_memory_to_chroma, path, content)
             return f"Successfully wrote {len(content)} bytes to {path}"
         except PermissionError as e:
             return f"Error: {e}"
@@ -184,7 +190,8 @@ class EditFileTool(Tool):
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")
             if _is_memory_file(path):
-                _index_memory_to_chroma(path, new_content)
+                loop = asyncio.get_event_loop()
+                loop.run_in_executor(None, _index_memory_to_chroma, path, new_content)
             return f"Successfully edited {path}"
         except PermissionError as e:
             return f"Error: {e}"
