@@ -6,7 +6,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-_MINIMAX_XML_RE = re.compile(r"<minimax:tool_call>.*?</minimax:tool_call>", re.DOTALL)
+_MINIMAX_XML_RE = re.compile(
+    r"<minimax:tool_call>.*?</minimax:tool_call>|<invoke\s+name=\"[^\"]+\">.*?</invoke>",
+    re.DOTALL,
+)
 
 
 def _strip_minimax_xml(text: str) -> str:

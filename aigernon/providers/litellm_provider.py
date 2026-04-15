@@ -149,21 +149,21 @@ class LiteLLMProvider(LLMProvider):
             response = await acompletion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
-            # Return error as content for graceful handling
+            msg = str(e)
+            # Provider errors often contain full HTML pages — never send those to chat
+            if "<html" in msg.lower() or "<!doctype" in msg.lower() or len(msg) > 400:
+                msg = "The AI provider is temporarily unavailable. Please try again in a moment."
             return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
+                content=f"Sorry — {msg}",
                 finish_reason="error",
             )
     
     def _parse_minimax_tool_calls(self, content: str) -> tuple[list[ToolCallRequest], str]:
         """Extract MiniMax XML-style tool calls from content.
 
-        MiniMax outputs tool calls as:
-            <minimax:tool_call>
-            <invoke name="tool_name">
-            <parameter name="key">value</parameter>
-            </invoke>
-            </minimax:tool_call>
+        Handles two formats:
+        1. Wrapped: <minimax:tool_call><invoke name="...">...</invoke></minimax:tool_call>
+        2. Bare:    <invoke name="...">...</invoke>  (no wrapper)
 
         Returns (tool_calls, cleaned_content) with the XML blocks stripped.
         """
@@ -171,15 +171,9 @@ class LiteLLMProvider(LLMProvider):
         import uuid
 
         tool_calls: list[ToolCallRequest] = []
-        block_re = re.compile(
-            r"<minimax:tool_call>\s*<invoke name=\"([^\"]+)\">(.*?)</invoke>\s*</minimax:tool_call>",
-            re.DOTALL,
-        )
         param_re = re.compile(r'<parameter name="([^"]+)">(.*?)</parameter>', re.DOTALL)
 
-        def _replace(m: re.Match) -> str:
-            tool_name = m.group(1)
-            params_block = m.group(2)
+        def _extract(tool_name: str, params_block: str) -> str:
             arguments: dict[str, Any] = {}
             for pm in param_re.finditer(params_block):
                 arguments[pm.group(1)] = pm.group(2).strip()
@@ -190,8 +184,21 @@ class LiteLLMProvider(LLMProvider):
             ))
             return ""
 
-        cleaned = block_re.sub(_replace, content).strip()
-        return tool_calls, cleaned
+        # Pattern 1: wrapped in <minimax:tool_call>
+        wrapped_re = re.compile(
+            r"<minimax:tool_call>\s*<invoke name=\"([^\"]+)\">(.*?)</invoke>\s*</minimax:tool_call>",
+            re.DOTALL,
+        )
+        cleaned = wrapped_re.sub(lambda m: _extract(m.group(1), m.group(2)), content)
+
+        # Pattern 2: bare <invoke> blocks (MiniMax omits wrapper on some calls)
+        bare_re = re.compile(
+            r"<invoke\s+name=\"([^\"]+)\">(.*?)</invoke>",
+            re.DOTALL,
+        )
+        cleaned = bare_re.sub(lambda m: _extract(m.group(1), m.group(2)), cleaned)
+
+        return tool_calls, cleaned.strip()
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
@@ -222,8 +229,9 @@ class LiteLLMProvider(LLMProvider):
                 ))
 
         # Fallback: parse MiniMax XML tool calls embedded in content
+        # MiniMax sometimes omits the <minimax:tool_call> wrapper entirely
         content = message.content or ""
-        if not tool_calls and content and "<minimax:tool_call>" in content:
+        if not tool_calls and content and ("<minimax:tool_call>" in content or "<invoke " in content):
             parsed, content = self._parse_minimax_tool_calls(content)
             if parsed:
                 tool_calls = parsed
