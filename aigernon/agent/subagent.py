@@ -37,6 +37,7 @@ class SubagentManager:
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
         web_mode: bool = False,
+        result_callback=None,
     ):
         from aigernon.config.schema import ExecToolConfig
         self.provider = provider
@@ -47,6 +48,7 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.web_mode = web_mode
+        self._result_callback = result_callback  # async (channel, chat_id, label, result, status) -> None
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -193,28 +195,37 @@ class SubagentManager:
         origin: dict[str, str],
         status: str,
     ) -> None:
-        """Announce the subagent result to the main agent via the message bus."""
-        status_text = "completed successfully" if status == "ok" else "failed"
-        
-        announce_content = f"""[Subagent '{label}' {status_text}]
-
-Task: {task}
-
-Result:
-{result}
-
-Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not mention technical details like "subagent" or task IDs."""
-        
-        # Inject as system message to trigger main agent
-        msg = InboundMessage(
-            channel="system",
-            sender_id="subagent",
-            chat_id=f"{origin['channel']}:{origin['chat_id']}",
-            content=announce_content,
-        )
-        
-        await self.bus.publish_inbound(msg)
-        logger.debug(f"Subagent [{task_id}] announced result to {origin['channel']}:{origin['chat_id']}")
+        """Announce the subagent result — via direct callback in web mode, bus in CLI mode."""
+        if self._result_callback:
+            # Web mode: deliver directly to the pool which pushes via WebSocket
+            try:
+                await self._result_callback(
+                    origin_channel=origin["channel"],
+                    origin_chat_id=origin["chat_id"],
+                    label=label,
+                    result=result,
+                    status=status,
+                )
+                logger.debug(f"Subagent [{task_id}] delivered result via callback to {origin['channel']}:{origin['chat_id']}")
+            except Exception as e:
+                logger.error(f"Subagent [{task_id}] result callback failed: {e}")
+        else:
+            # CLI/daemon mode: announce via bus so the running agent loop picks it up
+            status_text = "completed successfully" if status == "ok" else "failed"
+            announce_content = (
+                f"[Subagent '{label}' {status_text}]\n\n"
+                f"Task: {task}\n\nResult:\n{result}\n\n"
+                f"Summarize this naturally for the user. Keep it brief (1-2 sentences). "
+                f"Do not mention technical details like 'subagent' or task IDs."
+            )
+            msg = InboundMessage(
+                channel="system",
+                sender_id="subagent",
+                chat_id=f"{origin['channel']}:{origin['chat_id']}",
+                content=announce_content,
+            )
+            await self.bus.publish_inbound(msg)
+            logger.debug(f"Subagent [{task_id}] announced result via bus to {origin['channel']}:{origin['chat_id']}")
     
     def _build_subagent_prompt(self, task: str) -> str:
         """Build a focused system prompt for the subagent."""

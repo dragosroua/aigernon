@@ -1,6 +1,7 @@
 """Per-user agent loop pool with per-user message queuing."""
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ class AgentPool:
         cron_service=None,
         restrict_to_workspace: bool = False,
         db=None,
+        ws_manager=None,
     ):
         self._provider = provider
         self._workspace = workspace
@@ -41,6 +43,7 @@ class AgentPool:
         self._cron_service = cron_service
         self._restrict_to_workspace = restrict_to_workspace
         self._db = db  # Database instance for per-user token resolution
+        self._ws_manager = ws_manager  # WebSocketManager for async subagent delivery
 
         self._loops: dict[str, AgentLoop] = {}
         self._queues: dict[str, asyncio.Queue] = {}
@@ -57,6 +60,34 @@ class AgentPool:
 
         return resolver
 
+    def _make_result_callback(self, user_id: str):
+        """Build a callback that delivers subagent results to the user's WebSocket."""
+        async def on_subagent_result(
+            origin_channel: str,
+            origin_chat_id: str,
+            label: str,
+            result: str,
+            status: str,
+        ) -> None:
+            status_text = "completed" if status == "ok" else "encountered an error"
+            content = f"**{label}** {status_text}:\n\n{result}"
+            ws = self._ws_manager
+            if ws:
+                try:
+                    await ws.connections.send_to_user(origin_chat_id, {
+                        "type": "chat_message",
+                        "content": content,
+                        "is_complete": True,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    })
+                    logger.info(f"Delivered subagent result for '{label}' to user {origin_chat_id}")
+                except Exception as e:
+                    logger.error(f"Failed to push subagent result to WebSocket for {origin_chat_id}: {e}")
+            else:
+                logger.warning(f"No WebSocket manager — subagent result for '{label}' not delivered to {origin_chat_id}")
+
+        return on_subagent_result
+
     def _get_or_create_loop(self, user_id: str) -> AgentLoop:
         if user_id not in self._loops:
             logger.info(f"Creating agent loop for user {user_id}")
@@ -71,6 +102,7 @@ class AgentPool:
                 restrict_to_workspace=self._restrict_to_workspace,
                 web_mode=True,  # web/API users: GitTool only, no ExecTool
                 token_resolver=self._make_token_resolver(user_id),
+                result_callback=self._make_result_callback(user_id),
             )
         return self._loops[user_id]
 

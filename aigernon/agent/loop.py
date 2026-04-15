@@ -49,6 +49,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         web_mode: bool = False,
         token_resolver=None,
+        result_callback=None,
     ):
         from aigernon.config.schema import ExecToolConfig
         from aigernon.cron.service import CronService
@@ -63,7 +64,7 @@ class AgentLoop:
         self.restrict_to_workspace = restrict_to_workspace
         self.web_mode = web_mode
         self.token_resolver = token_resolver  # async (owner: str) -> token | None
-        
+
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
@@ -76,6 +77,7 @@ class AgentLoop:
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
             web_mode=web_mode,
+            result_callback=result_callback,
         )
         
         self._running = False

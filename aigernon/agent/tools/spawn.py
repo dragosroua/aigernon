@@ -33,9 +33,11 @@ class SpawnTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Spawn a subagent to handle a task in the background. "
-            "Use this for complex or time-consuming tasks that can run independently. "
-            "The subagent will complete the task and report back when done."
+            "Spawn a background subagent for tasks that require extensive file exploration, "
+            "multi-step web research, or many iterations of work. "
+            "Do NOT use this for conversational questions or simple lookups — answer those directly. "
+            "After calling spawn, you MUST write a brief acknowledgment to the user in your response text "
+            "(e.g. 'I'm on it — I'll report back shortly.'). Never spawn silently."
         )
     
     @property
@@ -57,9 +59,15 @@ class SpawnTool(Tool):
     
     async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
-        return await self._manager.spawn(
+        status = await self._manager.spawn(
             task=task,
             label=label,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
+        )
+        return (
+            f"{status} "
+            f"IMPORTANT: Write a brief acknowledgment to the user now in your response text — "
+            f"one sentence saying you've started working on this and will report back. "
+            f"Do not call any tool to deliver this, just write it directly."
         )
