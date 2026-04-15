@@ -221,12 +221,17 @@ class GitTool(Tool):
         if not token:
             return {}, None
 
-        # Write temp script; use a secure tempfile so no other process can read it
+        # Write temp script; use a secure tempfile so no other process can read it.
+        # GIT_ASKPASS receives the prompt as $1 ("Username for ..." or "Password for ...").
+        # GitHub token auth: any username + token as password.
         fd, script_path = tempfile.mkstemp(prefix="git_askpass_", suffix=".sh")
         try:
             script_content = (
                 "#!/bin/sh\n"
-                f"echo '{token}'\n"
+                "case \"$1\" in\n"
+                "  *Username*|*username*) echo 'x-oauth-basic' ;;\n"
+                f"  *) echo '{token}' ;;\n"
+                "esac\n"
             )
             os.write(fd, script_content.encode())
         finally:
