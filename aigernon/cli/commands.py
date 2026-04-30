@@ -639,17 +639,18 @@ def gateway(
 def agent(
     message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
     session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),
+    unit: str = typer.Option(None, "--unit", "-u", help="Run goal through ADD-Harness (Assess→Decide→Do→Ratify)"),
 ):
     """Interact with the agent directly."""
     from aigernon.config.loader import load_config
     from aigernon.bus.queue import MessageBus
     from aigernon.agent.loop import AgentLoop
-    
+
     config = load_config()
-    
+
     bus = MessageBus()
     provider = _make_provider(config)
-    
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -658,7 +659,26 @@ def agent(
         exec_config=config.tools.exec,
         restrict_to_workspace=config.tools.restrict_to_workspace,
     )
-    
+
+    if unit:
+        # Harness mode: run goal through ADD-Harness
+        from aigernon.harness.loop import run_unit
+
+        async def run_harness():
+            console.print(f"\n{__logo__} Running ADD-Harness unit: {unit!r}\n")
+            result = await run_unit(unit, agent_loop)
+            outcome = result.get("outcome", "unknown")
+            uid = result.get("unit_id", "?")
+            if outcome == "pass":
+                console.print(f"\n{__logo__} Unit [green]{uid}[/green] — Ratify PASS. Archived.")
+            else:
+                fail_reason = (result.get("ratify") or {}).get("fail_reason", result.get("error", ""))
+                console.print(f"\n{__logo__} Unit [red]{uid}[/red] — Ratify FAIL: {fail_reason}")
+            return result
+
+        asyncio.run(run_harness())
+        return
+
     if message:
         # Single message mode
         async def run_once():
@@ -698,6 +718,294 @@ def agent(
                     break
         
         asyncio.run(run_interactive())
+
+
+# ============================================================================
+# Unit Commands (ADD-Harness inspection)
+# ============================================================================
+
+unit_app = typer.Typer(help="Inspect ADD-Harness units")
+app.add_typer(unit_app, name="unit")
+
+
+@unit_app.command("list")
+def unit_list(
+    status: str = typer.Option(None, "--status", "-s", help="Filter by status"),
+):
+    """List ADD-Harness units."""
+    from aigernon.harness.unit import list_units
+
+    units = list_units(status=status)
+    if not units:
+        console.print("No units found.")
+        return
+
+    table = Table(title="ADD-Harness Units")
+    table.add_column("Unit ID", style="cyan")
+    table.add_column("Status", style="bold")
+    table.add_column("Re-Assess")
+    table.add_column("Goal")
+    table.add_column("Created")
+
+    STATUS_STYLE = {
+        "archived": "green",
+        "assessing": "yellow",
+        "deciding": "yellow",
+        "doing": "blue",
+        "ratifying": "magenta",
+        "reassessing": "red",
+        "escalated": "red",
+    }
+
+    for u in units:
+        s = u.get("status", "?")
+        table.add_row(
+            u["unit_id"],
+            f"[{STATUS_STYLE.get(s, 'white')}]{s}[/]",
+            str(u.get("reassess_count", 0)),
+            u.get("goal", "")[:60],
+            u.get("created_at", "")[:19],
+        )
+
+    console.print(table)
+
+
+@unit_app.command("show")
+def unit_show(unit_id: str = typer.Argument(..., help="Unit ID to inspect")):
+    """Show full details of a unit."""
+    import json as _json
+    from aigernon.harness.unit import get_unit
+    from aigernon.harness.criteria import read_criteria
+    from aigernon.harness.plan import read_plan
+    from aigernon.harness.do import read_claim
+    from aigernon.harness.ratify import read_ratify
+    from aigernon.harness.imbalance import detect_imbalances
+
+    meta = get_unit(unit_id)
+    if not meta:
+        console.print(f"[red]Unit {unit_id!r} not found.[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold cyan]Unit {unit_id}[/bold cyan]")
+    console.print(f"  Goal:     {meta.get('goal')}")
+    console.print(f"  Status:   [bold]{meta.get('status')}[/bold]")
+    console.print(f"  Re-Assess count: {meta.get('reassess_count', 0)}")
+    console.print(f"  Created:  {meta.get('created_at', '')[:19]}")
+    console.print(f"  Updated:  {meta.get('updated_at', '')[:19]}")
+
+    criteria = read_criteria(unit_id)
+    if criteria:
+        console.print(f"\n[bold]Criteria[/bold] (v{criteria.get('version')})")
+        hard = criteria.get("hard_criteria", [])
+        soft = criteria.get("soft_criteria", [])
+        for hc in hard:
+            console.print(f"  [green]HC[/green] {hc['id']}: {hc['type']} → {hc['spec']}")
+        for sc in soft:
+            console.print(f"  [blue]SC[/blue] {sc['id']}: {sc['description']}")
+
+    plan = read_plan(unit_id)
+    if plan:
+        console.print(f"\n[bold]Plan[/bold] (v{plan.get('version')})")
+        console.print(f"  Approach: {plan.get('approach', '')[:80]}")
+        for step in plan.get("steps", []):
+            console.print(f"  Step {step['id']}: {step['description']}")
+
+    claim = read_claim(unit_id)
+    if claim:
+        console.print(f"\n[bold]Claim[/bold]")
+        console.print(f"  {claim.get('summary', '')[:100]}")
+
+    ratify_rec = read_ratify(unit_id)
+    if ratify_rec:
+        outcome = ratify_rec.get("outcome", "?")
+        colour = "green" if outcome == "pass" else "red"
+        console.print(f"\n[bold]Ratify[/bold] → [{colour}]{outcome.upper()}[/{colour}]")
+        if ratify_rec.get("fail_reason"):
+            console.print(f"  Fail reason: {ratify_rec['fail_reason']}")
+        for cid, result in ratify_rec.get("results", {}).items():
+            mark = "[green]✓[/green]" if result["pass"] else "[red]✗[/red]"
+            console.print(f"  {mark} {cid}: {result.get('evidence', '')[:70]}")
+
+    imbalances = detect_imbalances(unit_id)
+    if imbalances:
+        console.print(f"\n[bold yellow]Imbalances detected[/bold yellow]")
+        for imb in imbalances:
+            console.print(f"  [{imb['realm']}] {imb['pattern']}: {imb['recommendation'][:80]}")
+
+
+@unit_app.command("substrate")
+def unit_substrate(unit_id: str = typer.Argument(..., help="Unit ID")):
+    """Print the Substrate (journey document) for a unit."""
+    from aigernon.harness.unit import get_unit
+    from aigernon.harness.substrate import read_substrate
+
+    if not get_unit(unit_id):
+        console.print(f"[red]Unit {unit_id!r} not found.[/red]")
+        raise typer.Exit(1)
+
+    content = read_substrate(unit_id)
+    if not content:
+        console.print("(substrate is empty)")
+    else:
+        console.print(content)
+
+
+@unit_app.command("resume")
+def unit_resume(
+    unit_id: str = typer.Argument(..., help="Paused unit ID to resume"),
+    response: str = typer.Option("", "--response", "-r", help="Human response / approval text"),
+):
+    """Resume a unit paused for human input (f5.5)."""
+    from aigernon.harness.unit import get_unit
+    from aigernon.harness.loop import resume_unit
+
+    meta = get_unit(unit_id)
+    if not meta:
+        console.print(f"[red]Unit {unit_id!r} not found.[/red]")
+        raise typer.Exit(1)
+    if meta["status"] != "paused":
+        console.print(f"[red]Unit {unit_id!r} is not paused (status={meta['status']!r}).[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Resuming unit [bold]{unit_id}[/bold]...")
+
+    async def _run():
+        from aigernon.agent.loop import AgentLoop
+        from aigernon.config.loader import load_config
+        config = load_config()
+        agent = AgentLoop(config=config)
+        return await resume_unit(unit_id, agent, human_response=response)
+
+    result = asyncio.run(_run())
+    outcome = result.get("outcome", "unknown")
+    color = "green" if outcome == "pass" else "yellow" if outcome == "paused" else "red"
+    console.print(f"Outcome: [{color}]{outcome}[/{color}]")
+
+
+# ============================================================================
+# Schedule Commands (f5.1, f5.3)
+# ============================================================================
+
+schedule_app = typer.Typer(help="Manage scheduled ADD-Harness units")
+app.add_typer(schedule_app, name="schedule")
+
+
+@schedule_app.command("add")
+def schedule_add(
+    task: str = typer.Argument(..., help="Goal / task description"),
+    every: str = typer.Option(None, "--every", "-e",
+                              help="Interval: e.g. 6h, 30m, 3600s"),
+    cron: str = typer.Option(None, "--cron", "-c",
+                             help="Cron expression: e.g. '0 9 * * *'"),
+    notify_channel: str = typer.Option(None, "--notify-channel",
+                                       help="Notification channel (telegram)"),
+    notify_to: str = typer.Option(None, "--notify-to",
+                                  help="Destination (e.g. Telegram chat_id)"),
+):
+    """Schedule a recurring harness unit."""
+    from aigernon.harness.scheduler import HarnessScheduler
+
+    if not every and not cron:
+        console.print("[red]Either --every or --cron is required.[/red]")
+        raise typer.Exit(1)
+
+    every_seconds: int | None = None
+    if every:
+        try:
+            if every.endswith("h"):
+                every_seconds = int(every[:-1]) * 3600
+            elif every.endswith("m"):
+                every_seconds = int(every[:-1]) * 60
+            elif every.endswith("s"):
+                every_seconds = int(every[:-1])
+            else:
+                every_seconds = int(every)
+        except ValueError:
+            console.print(f"[red]Invalid --every value: {every!r}. Use e.g. 6h, 30m, 3600s.[/red]")
+            raise typer.Exit(1)
+
+    sched = HarnessScheduler()
+    job = sched.add_job(
+        goal=task,
+        every_seconds=every_seconds,
+        cron_expr=cron,
+        notify_channel=notify_channel,
+        notify_to=notify_to,
+    )
+    console.print(f"[green]Scheduled job [bold]{job.id}[/bold] ({job.schedule_description()}):[/green] {task}")
+
+
+@schedule_app.command("list")
+def schedule_list():
+    """List all scheduled harness jobs."""
+    from aigernon.harness.scheduler import HarnessScheduler
+    from datetime import datetime, timezone
+
+    sched = HarnessScheduler()
+    jobs = sched.list_jobs()
+
+    if not jobs:
+        console.print("No scheduled jobs.")
+        return
+
+    table = Table(title="Scheduled Harness Jobs")
+    table.add_column("ID", style="cyan")
+    table.add_column("Schedule")
+    table.add_column("Goal")
+    table.add_column("Enabled", justify="center")
+    table.add_column("Next Run")
+    table.add_column("Last Unit")
+
+    for job in jobs:
+        next_run = ""
+        if job.next_run_at_ms:
+            dt = datetime.fromtimestamp(job.next_run_at_ms / 1000, tz=timezone.utc)
+            next_run = dt.strftime("%Y-%m-%d %H:%M UTC")
+        table.add_row(
+            job.id,
+            job.schedule_description(),
+            job.goal[:60] + ("..." if len(job.goal) > 60 else ""),
+            "✓" if job.enabled else "✗",
+            next_run,
+            job.last_unit_id or "-",
+        )
+
+    console.print(table)
+
+
+@schedule_app.command("remove")
+def schedule_remove(job_id: str = typer.Argument(..., help="Job ID to remove")):
+    """Remove a scheduled job."""
+    from aigernon.harness.scheduler import HarnessScheduler
+
+    sched = HarnessScheduler()
+    if sched.remove_job(job_id):
+        console.print(f"[green]Removed job {job_id!r}.[/green]")
+    else:
+        console.print(f"[red]Job {job_id!r} not found.[/red]")
+        raise typer.Exit(1)
+
+
+@schedule_app.command("tick")
+def schedule_tick():
+    """Run one scheduler tick — fire any due jobs now."""
+    import asyncio as _asyncio
+
+    async def _run():
+        from aigernon.harness.scheduler import HarnessScheduler
+        from aigernon.agent.loop import AgentLoop
+        from aigernon.config.loader import load_config
+        config = load_config()
+        agent = AgentLoop(config=config)
+        sched = HarnessScheduler()
+        started = await sched.tick(agent)
+        return started
+
+    started = _asyncio.run(_run())
+    if started:
+        console.print(f"[green]Started {len(started)} unit(s):[/green] {', '.join(started)}")
+    else:
+        console.print("No jobs were due.")
 
 
 # ============================================================================

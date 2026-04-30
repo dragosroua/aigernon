@@ -241,6 +241,25 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
 
+    # MiniMax: needs "minimax/" prefix for LiteLLM routing.
+    # Used as the default Ratify judge model in ADD-Harness.
+    ProviderSpec(
+        name="minimax",
+        keywords=("minimax",),
+        env_key="MINIMAX_API_KEY",
+        display_name="MiniMax",
+        litellm_prefix="minimax",
+        skip_prefixes=("minimax/",),
+        env_extras=(),
+        is_gateway=False,
+        is_local=False,
+        detect_by_key_prefix="",
+        detect_by_base_keyword="",
+        default_api_base="",
+        strip_model_prefix=False,
+        model_overrides=(),
+    ),
+
     # === Local deployment (matched by config key, NOT by api_base) =========
 
     # vLLM / any OpenAI-compatible local server.

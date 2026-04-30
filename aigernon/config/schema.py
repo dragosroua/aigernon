@@ -90,6 +90,7 @@ class ProvidersConfig(BaseModel):
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
+    minimax: ProviderConfig = Field(default_factory=ProviderConfig)
 
 
 class GatewayConfig(BaseModel):
@@ -145,6 +146,11 @@ class VectorConfig(BaseModel):
     collections: list[str] = Field(default_factory=lambda: ["memories", "blog", "diary"])  # Enabled collections
 
 
+class HarnessConfig(BaseModel):
+    """ADD-Harness configuration."""
+    judge_model: str = "minimax/MiniMax-Text-01"
+
+
 class OAuthConfig(BaseModel):
     """OAuth configuration for web UI."""
     provider: str = "google"  # google, github
@@ -183,6 +189,7 @@ class Config(BaseSettings):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     vector: VectorConfig = Field(default_factory=VectorConfig)
     api: APIConfig = Field(default_factory=APIConfig)
+    harness: HarnessConfig = Field(default_factory=HarnessConfig)
     
     @property
     def workspace_path(self) -> Path:
